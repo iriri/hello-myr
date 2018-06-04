@@ -1,11 +1,10 @@
-/* only tested on os x as of rn so maybe things are less broken elsewhere */
 use std
 use sys
 use thread
 use "channel"
 
-const Threadc = 4
-const Lim = 100
+const Threadc = 16
+const Lim = 10000
 
 const main = {
     var c = channel.make(16)
@@ -21,16 +20,16 @@ const main = {
     | (i, channel.Ok): std.put("{}\n", i)
     | (_, channel.Closed): std.put("closed\n")
     ;;
-    channel.close(c)
 
     /* torture test */
     var sum : int64 = 0
+    var sump = &sum
     var done : int32 = 0
+    var donep = &done
     for var i = 0; i < Threadc ; i++
         channel.dup(c)
-        thread.spawn({ /* threads seem totally broken? */
-            std.put("{}\n", c) /* addr seems wrong */
-            /*
+        thread.spawn({
+            /* var c = channel.dup(c) */ /* seems broken */
             var local_sum = 0
             for ; ;
                 match channel.recv(c)
@@ -39,30 +38,26 @@ const main = {
                 ;;
             ;;
             std.put("local sum: {}\n", local_sum)
-            thread.xadd(&sum, (local_sum : int64))
-            */
-            thread.xadd(&done, 1) /* doesn't seem to work either? */
+            thread.xadd(sump, (local_sum : int64))
+            thread.xadd(donep, 1)
         })
     ;;
     for var i = 0; i < Threadc ; i++
         thread.spawn({
-            std.put("{}\n", c)
-            /*
             var local_sum = 0
-            for var i = 0; i <= Lim; i++
+            for var i = 1; i <= Lim; i++
                 channel.send(c, i)
             ;;
             channel.close(c)
-            */
         })
     ;;
+    channel.close(c)
 
     /* tfw no thread.join */
-    while thread.xget(&done) < Threadc /* doesn't work */
-        std.put("not done: {}\n", thread.xget(&done))
+    while thread.xget(donep) < Threadc
         sys.sleep(1)
     ;;
-    std.put("sum: {}\n", sum)
+    std.put("sum: {}\n", sum) /* needs more fencing? */
 
     channel.drop(c)
 }

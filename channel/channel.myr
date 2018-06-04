@@ -30,9 +30,9 @@ pkg channel =
 
 const make = {cap: uint32
     /* how do i break long lines? */
-    var c = (std.zbytealloc(sizeof(channel) + ((cap : std.size) * sizeof(int))) : channel#)
-    /* null, nil, and none all don't appear in the standard? what do
-     * allocations return on failure then? */
+    var c = (std.zbytealloc(sizeof(channel) + ((cap : std.size) * sizeof(cell))) : channel#)
+    /* null, nil, and none all don't appear in the standard? how do allocations
+     * fail? */
     c# = [.cap = cap, .refc = 1, .read = 1 << 32]
     -> c
 }
@@ -41,16 +41,16 @@ const make = {cap: uint32
  * traits. tbh this is totally fine b/c i don't even particularly like method
  * syntax */
 const drop = {c: channel#
-    std.bytefree((c : byte#), sizeof(channel) + ((c.cap : std.size) * sizeof(int)))
+    std.bytefree((c : byte#), sizeof(channel) + ((c.cap : std.size) * sizeof(cell)))
 }
 
 const dup = {c: channel#
-    thread.xadd(&c.cap, 1) /* tfw no xsub */
-    -> c /* this part seems to not work */
+    thread.xadd(&c.refc, 1)
+    -> c
 }
 
 const close = {c: channel#
-    thread.xadd(&c.cap, -1) /* tfw no xsub */
+    thread.xadd(&c.refc, -1) /* tfw no xsub */
 }
 
 const send = {c: channel#, i: int
@@ -67,8 +67,8 @@ const send = {c: channel#, i: int
             continue
         ;;
 
-        var write1 = (write : uint32) + 1 < c.cap ? write + 1 : ((lap + 2) << 32 : uint64)
-        if thread.xcas(&c.write, write, write1) == write /* should this return a bool? */
+        var write1 = index + 1 < c.cap ? write + 1 : ((lap + 2 : uint64) << 32)
+        if thread.xcas(&c.write, write, write1) == write
             c.buf[index].elt = i
             thread.xset(&c.buf[index].lap, lap + 1)
             -> Ok
@@ -90,11 +90,11 @@ const recv = {c: channel#
             continue
         ;;
 
-        var read1 = (read : uint32) + 1 < c.cap ? read + 1 : ((lap + 2) << 32 : uint64)
+        var read1 = index + 1 < c.cap ? read + 1 : ((lap + 2 : uint64) << 32)
         if thread.xcas(&c.read, read, read1) == read
             thread.xset(&c.buf[index].lap, lap + 1)
             -> (c.buf[index].elt, Ok)
         ;;
     ;;
-    -> (0, Closed) /* unreachable */
+    -> (0, Closed)
 }
