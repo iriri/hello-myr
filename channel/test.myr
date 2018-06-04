@@ -3,8 +3,8 @@ use sys
 use thread
 use "channel"
 
-const Threadc = 16
-const Lim = 10000
+const Threadc = 1
+const Lim = 100000
 
 const main = {
     var c = channel.make(16)
@@ -31,9 +31,15 @@ const main = {
         thread.spawn({
             /* var c = channel.dup(c) */ /* seems broken */
             var local_sum = 0
+            var prev = 0
             for ; ;
                 match channel.recv(c)
-                | (i1, channel.Ok): local_sum += i1
+                | (i1, channel.Ok):
+                    local_sum += i1
+                    if i1 - 1 != prev
+                        std.put("i: {}, prev: {}\n", i1, prev)
+                    ;;
+                    prev = i1
                 | (_, channel.Closed): break
                 ;;
             ;;
@@ -57,7 +63,8 @@ const main = {
     while thread.xget(donep) < Threadc
         sys.sleep(1)
     ;;
-    std.put("sum: {}\n", sum) /* needs more fencing? */
+    std.put("sum:      {}\n", sum) /* needs more fencing? */
+    std.put("expected: {}\n", ((Lim * (Lim - 1)) / 2) * (Threadc : int))
 
     channel.drop(c)
 }
