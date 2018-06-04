@@ -1,0 +1,68 @@
+/* only tested on os x as of rn so maybe things are less broken elsewhere */
+use std
+use sys
+use thread
+use "channel"
+
+const Threadc = 4
+const Lim = 100
+
+const main = {
+    var c = channel.make(16)
+
+    /* basic test */
+    channel.send(c, 1)
+    channel.send(c, 2)
+    match channel.recv(c) /* rust-style if/while let syntax would be nice */
+    | (i, channel.Ok): std.put("{}\n", i)
+    | (_, channel.Closed): std.put("closed\n")
+    ;;
+    match channel.recv(c)
+    | (i, channel.Ok): std.put("{}\n", i)
+    | (_, channel.Closed): std.put("closed\n")
+    ;;
+    channel.close(c)
+
+    /* torture test */
+    var sum : int64 = 0
+    var done : int32 = 0
+    for var i = 0; i < Threadc ; i++
+        channel.dup(c)
+        thread.spawn({ /* threads seem totally broken? */
+            std.put("{}\n", c) /* addr seems wrong */
+            /*
+            var local_sum = 0
+            for ; ;
+                match channel.recv(c)
+                | (i1, channel.Ok): local_sum += i1
+                | (_, channel.Closed): break
+                ;;
+            ;;
+            std.put("local sum: {}\n", local_sum)
+            thread.xadd(&sum, (local_sum : int64))
+            */
+            thread.xadd(&done, 1) /* doesn't seem to work either? */
+        })
+    ;;
+    for var i = 0; i < Threadc ; i++
+        thread.spawn({
+            std.put("{}\n", c)
+            /*
+            var local_sum = 0
+            for var i = 0; i <= Lim; i++
+                channel.send(c, i)
+            ;;
+            channel.close(c)
+            */
+        })
+    ;;
+
+    /* tfw no thread.join */
+    while thread.xget(&done) < Threadc /* doesn't work */
+        std.put("not done: {}\n", thread.xget(&done))
+        sys.sleep(1)
+    ;;
+    std.put("sum: {}\n", sum)
+
+    channel.drop(c)
+}
