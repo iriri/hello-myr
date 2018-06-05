@@ -1,0 +1,51 @@
+use std
+use sys
+use thread
+
+const main = {
+    var loopc = 1
+    for ; ;
+        var x : int32 = 0
+        var xp = &x
+        var y : int32 = 0
+        var yp = &y
+        var z : int32 = 0
+        var zp = &z
+        var done : int32 = 0
+        var donep = &done
+
+        thread.spawn({
+            while thread.xget(xp) == 0
+            ;;
+            if thread.xget(yp) == 1
+                thread.xadd(zp, 1)
+            ;;
+            thread.xadd(donep, 1)
+        })
+        thread.spawn({
+            while thread.xget(yp) == 0
+            ;;
+            if thread.xget(xp) == 1
+                thread.xadd(zp, 1)
+            ;;
+            thread.xadd(donep, 1)
+        })
+        thread.spawn({
+            thread.xset(xp, 1)
+            thread.xadd(donep, 1)
+        })
+        thread.spawn({
+            thread.xset(yp, 1)
+            thread.xadd(donep, 1)
+        })
+
+        while thread.xget(donep) < 4
+            sys.sleep(1)
+        ;;
+        if thread.xget(zp) == 0
+            std.put("seq cst ordering violated after after {} loops\n", loopc)
+            break
+        ;;
+        loopc++
+    ;;
+}

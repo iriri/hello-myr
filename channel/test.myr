@@ -3,20 +3,15 @@ use sys
 use thread
 use "channel"
 
-const Threadc = 1
+const Threadc = 16
 const Lim = 100000
 
 const main = {
-    var c = channel.make(16)
+    var c = channel.make(1)
 
     /* basic test */
     channel.send(c, 1)
-    channel.send(c, 2)
     match channel.recv(c) /* rust-style if/while let syntax would be nice */
-    | (i, channel.Ok): std.put("{}\n", i)
-    | (_, channel.Closed): std.put("closed\n")
-    ;;
-    match channel.recv(c)
     | (i, channel.Ok): std.put("{}\n", i)
     | (_, channel.Closed): std.put("closed\n")
     ;;
@@ -27,19 +22,11 @@ const main = {
     var done : int32 = 0
     var donep = &done
     for var i = 0; i < Threadc ; i++
-        channel.dup(c)
         thread.spawn({
-            /* var c = channel.dup(c) */ /* seems broken */
-            var local_sum = 0
-            var prev = 0
+            var local_sum : int64 = 0
             for ; ;
                 match channel.recv(c)
-                | (i1, channel.Ok):
-                    local_sum += i1
-                    if i1 - 1 != prev
-                        std.put("i: {}, prev: {}\n", i1, prev)
-                    ;;
-                    prev = i1
+                | (i1, channel.Ok): local_sum += (i1 : int64)
                 | (_, channel.Closed): break
                 ;;
             ;;
@@ -49,12 +36,13 @@ const main = {
         })
     ;;
     for var i = 0; i < Threadc ; i++
+        var c1 = channel.dup(c)
         thread.spawn({
             var local_sum = 0
             for var i = 1; i <= Lim; i++
-                channel.send(c, i)
+                channel.send(c1, i)
             ;;
-            channel.close(c)
+            channel.close(c1)
         })
     ;;
     channel.close(c)
@@ -64,7 +52,7 @@ const main = {
         sys.sleep(1)
     ;;
     std.put("sum:      {}\n", sum) /* needs more fencing? */
-    std.put("expected: {}\n", ((Lim * (Lim - 1)) / 2) * (Threadc : int))
+    std.put("expected: {}\n", (((Lim : int64) * ((Lim : int64) + 1)) / 2) * (Threadc : int64))
 
     channel.drop(c)
 }

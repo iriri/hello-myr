@@ -92,8 +92,9 @@ const recv = {c: channel#
 
         var read1 = index + 1 < c.cap ? read + 1 : ((lap + 2 : uint64) << 32)
         if thread.xcas(&c.read, read, read1) == read
+            var elt = c.buf[index].elt
             thread.xset(&c.buf[index].lap, lap + 1)
-            -> (c.buf[index].elt, Ok)
+            -> (elt, Ok)
         ;;
     ;;
     -> (0, Closed)
