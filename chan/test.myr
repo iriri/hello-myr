@@ -7,8 +7,7 @@ const Threadc = 16
 const Lim = 100000
 
 const main = {
-	var c = chan.make(1)
-	/* var c : chan.chan(int64) = chan.make(1) */ /* doesn't work? */
+	var c : chan.chan(int64)# = chan.make(1)
 
 	/* basic test */
 	chan.send(c, 1)
@@ -16,6 +15,7 @@ const main = {
 	match chan.recv(c)
 	| `chan.Ok `std.Some i: std.put("received {}\n", i)
 	| `chan.Ok `std.None: std.die("received nothing\n")
+	| `chan.Wblock: std.die("would block\n")
 	| `chan.Closed: std.die("closed\n")
 	;;
 
@@ -27,19 +27,9 @@ const main = {
 	for var i = 0; i < Threadc ; i++
 		thread.spawn({
 			var local_sum : int64 = 0
-			for ; ;
-				match chan.recv(c)
-				| `chan.Ok `std.Some i1: local_sum += i1
-				| `chan.Ok `std.None:
-					std.die("received nothing\n")
-				| `chan.Closed: break
-				;;
-			;;
-			/* doesn't seem to work?
-			for i1 : c
+			for i1 : chan.bymsg(c)
 				local_sum += i1
 			;;
-			*/
 			std.put("local sum: {}\n", local_sum)
 			thread.xadd(sump, local_sum)
 			thread.xadd(donep, 1)

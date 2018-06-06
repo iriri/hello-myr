@@ -1,42 +1,71 @@
 use std
 use thread
+use "sem"
 
 pkg chan =
 	type chan(@a) = struct
 		cap : uint32
 		refc : uint32
+		sendq : waiter#
+		recvq : waiter#
 		write : uint64
 		read : uint64
+		lock : thread.mutex /* move this when adding unbuf channels */
 		buf : cell(@a)[...]
 	;;
 
 	type rc(@a) = union
 		`Ok std.option(@a)
-		/* `Wblock */
+		`Wblock
 		/* `Timedout */
 		`Closed
 	;;
+
+	type chaniter(@a) = chan(@a)#
 
 	generic make : (cap : uint32 -> chan(@a)#)
 	generic drop : (c : chan(@a)# -> void)
 	generic dup : (c : chan(@a)# -> chan(@a)#)
 	generic close : (c : chan(@a)# -> void)
-	generic send : (c : chan(@a)#, elt : @a -> rc(@a))
+	generic send : (c : chan(@a)#, msg : @a -> rc(@a))
 	generic recv : (c : chan(@a)# -> rc(@a))
+	generic trysend : (c : chan(@a)#, msg : @a -> rc(@a))
+	generic tryrecv : (c : chan(@a)# -> rc(@a))
+	generic bymsg : (c : chan(@a)# -> chaniter(@a))
 
-	impl iterable chan(@a)# -> @a
-
-	pkglocal type cell(@a) = struct
-		lap : uint32
-		elt : @a
-	;;
+	impl iterable chaniter(@a) -> @a
 
 	pkglocal generic zallocslack : (sz : std.size -> @a#)
 	pkglocal generic freeslack : (p : @a#, sz : std.size -> void)
-
+	pkglocal generic xgetptr : (p : @a## -> std.option(@a#))
+	/* why aren't these needed?
+	pkglocal generic xsetptr : (p : @a##, v :@a# -> void)
+	pkglocal const wqunblock : (wq : waiter##, \
+		lock : thread.mutex# -> void)
+	*/
+	pkglocal const wqpush : (wq : waiter##, \
+		sem : sem.sem#, \
+		selinfo : std.option(selinfo) -> waiter#)
 ;;
 
-pkglocal generic zallocslack = {sz : std.size -> @a#
+type cell(@a) = struct
+	lap : uint32
+	msg : @a
+;;
+
+type selinfo = struct
+	state : std.option(uint32#)
+	id : std.option(uint32)
+;;
+
+type waiter = struct
+	prev : std.option(waiter#)
+	next : std.option(waiter#)
+	sem : sem.sem#
+	selinfo : std.option(selinfo)
+;;
+
+generic zallocslack = {sz : std.size -> @a#
 	/* how do allocations fail? */
 	-> (std.zbytealloc(sizeof(@a) + sz) : @a#)
 }
@@ -47,7 +76,7 @@ generic make = {cap : uint32 -> chan(@a)#
 	-> c
 }
 
-pkglocal generic freeslack = {p : @a#, sz : std.size -> void
+generic freeslack = {p : @a#, sz : std.size -> void
 	std.bytefree((p : byte#), sizeof(@a) + sz)
 }
 
@@ -61,11 +90,72 @@ generic dup = {c : chan(@a)# -> chan(@a)#
 }
 
 generic close = {c : chan(@a)# -> void
-	thread.xadd(&c.refc, -1) /* tfw no xsub */
+	thread.xadd(&c.refc, -1)
 }
 
-generic send = {c : chan(@a)#, elt : @a -> rc(@a)
-	for ; ; /* is this the right way to do an infinite loop? */
+generic xgetptr = {p : @a## -> std.option(@a#)
+	match thread.xget((p : std.intptr#))
+	| 0: -> `std.None
+	| n: -> `std.Some (n : @a#)
+	;;
+}
+
+generic xsetptr = {p : @a##, v :@a# -> void
+	thread.xset((p : std.intptr#), (v : std.intptr))
+}
+
+const wqpush = {wq : waiter##, \
+		sem : sem.sem#, \
+		selinfo : std.option(selinfo) -> waiter#
+	var w : waiter# = std.mk([
+		.next = `std.None,
+		.sem = sem,
+		.selinfo = selinfo,
+	])
+
+	match xgetptr(wq)
+	| `std.Some q:
+		w.prev = q.prev
+		std.get(w.prev).next = `std.Some w
+		q.prev = `std.Some w
+	| `std.None:
+		w.prev = `std.Some w
+		xsetptr(wq, w)
+	;;
+	-> w
+}
+
+const wqshift = {wq : waiter## -> std.option(waiter#)
+	var w = xgetptr(wq)
+	match w
+	| `std.Some w1:
+		match w1.next
+		| `std.Some next: next.prev = w1.prev
+		| _:
+		;;
+		w1.prev = `std.None
+		xsetptr(wq, std.get(w1.next))
+	| _:
+	;;
+	-> w
+}
+
+const wqunblock = {wq : waiter##, lock : thread.mutex# -> void
+	thread.mtxlock(lock)
+	var w = xgetptr(wq)
+	thread.mtxunlock(lock)
+	match w
+	| `std.Some _:
+		match wqshift(wq)
+		| `std.Some w1: sem.post(w1.sem) /* works */
+		| _:
+		;;
+	| _:
+	;;
+}
+
+generic trysend = {c : chan(@a)#, msg : @a -> rc(@a)
+	for ; ;
 		if thread.xget(&c.refc) == 0
 			-> `Closed
 		;;
@@ -81,15 +171,16 @@ generic send = {c : chan(@a)#, elt : @a -> rc(@a)
 		var write1 = index + 1 < c.cap ? \
 				write + 1 : ((lap + 2 : uint64) << 32)
 		if thread.xcas(&c.write, write, write1) == write
-			c.buf[index].elt = elt
+			c.buf[index].msg = msg
 			thread.xset(&c.buf[index].lap, lap + 1)
+			wqunblock(&c.recvq, &c.lock)
 			-> `Ok `std.None
 		;;
 	;;
 	-> `Closed /* unreachable */
 }
 
-generic recv = {c : chan(@a)# -> rc(@a)
+generic tryrecv = {c : chan(@a)# -> rc(@a)
 	for ; ;
 		var read = thread.xget(&c.read)
 		var index = (read : uint32)
@@ -105,25 +196,73 @@ generic recv = {c : chan(@a)# -> rc(@a)
 		var read1 = index + 1 < c.cap ? \
 				read + 1 : ((lap + 2 : uint64) << 32)
 		if thread.xcas(&c.read, read, read1) == read
-			var elt = c.buf[index].elt
+			var msg = c.buf[index].msg
 			thread.xset(&c.buf[index].lap, lap + 1)
-			-> `Ok `std.Some elt
+			wqunblock(&c.recvq, &c.lock) /* works */
+			/* doesn't work
+			thread.mtxlock(&c.lock)
+			var w = xgetptr(&c.sendq)
+			thread.mtxunlock(&c.lock)
+			match w
+			| `std.Some _:
+				match wqshift(&c.sendq)
+				| `std.Some w1: sem.post(w1.sem)
+				| _:
+				;;
+			| _:
+			;;
+			*/
+			-> `Ok `std.Some msg
 		;;
 	;;
 	-> `Closed /* unreachable */
 }
 
-impl iterable chan(@a)# -> @a =
-	__iternext__ = {itp : chan(@a)##, valp : @a# -> bool
-		var c = itp#
-		match chan.recv(c)
-		| `chan.Ok `std.Some elt :
-			valp# = elt
-			-> true
+generic send = {c : chan(@a)#, msg : @a -> rc(@a)
+	for ; ;
+		match trysend(c, msg)
+		| `Ok o: -> `Ok o
+		| `Closed: -> `Closed
+		| _: continue
 		;;
-		->false
+
+		var s : sem.sem
+		thread.mtxlock(&c.lock)
+		var w = wqpush(&c.sendq, &s, `std.None)
+		/* check, etc */
+		thread.mtxunlock(&c.lock)
+		/* wait, etc */
+	;;
+	-> `Closed /* unreachable */
+}
+
+generic recv = {c : chan(@a)# -> rc(@a)
+	for ; ;
+		match tryrecv(c)
+		| `Ok o: -> `Ok o
+		| `Closed: -> `Closed
+		| _: continue
+		;;
+
+		/* add waiter, check, wait, etc. */
+	;;
+	-> `Closed /* unreachable */
+}
+
+generic bymsg = {ch : chan(@a)#
+	-> (ch : chaniter(@a))
+}
+
+impl iterable chaniter(@a) -> @a =
+	__iternext__ = {itp : chaniter(@a)#, valp : @a# -> bool
+		match chan.recv((itp# : chan(@a)#))
+		| `chan.Ok `std.Some msg :
+			valp# = msg
+			-> true
+		| _: -> false
+		;;
 	}
 
-	__iterfin__ = {itp : chan(@a)##, valp : @a# -> void
+	__iterfin__ = {itp : chaniter(@a)#, valp : @a# -> void
 	}
 ;;
