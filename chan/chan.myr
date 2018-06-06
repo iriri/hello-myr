@@ -1,0 +1,129 @@
+use std
+use thread
+
+pkg chan =
+	type chan(@a) = struct
+		cap : uint32
+		refc : uint32
+		write : uint64
+		read : uint64
+		buf : cell(@a)[...]
+	;;
+
+	type rc(@a) = union
+		`Ok std.option(@a)
+		/* `Wblock */
+		/* `Timedout */
+		`Closed
+	;;
+
+	generic make : (cap : uint32 -> chan(@a)#)
+	generic drop : (c : chan(@a)# -> void)
+	generic dup : (c : chan(@a)# -> chan(@a)#)
+	generic close : (c : chan(@a)# -> void)
+	generic send : (c : chan(@a)#, elt : @a -> rc(@a))
+	generic recv : (c : chan(@a)# -> rc(@a))
+
+	impl iterable chan(@a)# -> @a
+
+	pkglocal type cell(@a) = struct
+		lap : uint32
+		elt : @a
+	;;
+
+	pkglocal generic zallocslack : (sz : std.size -> @a#)
+	pkglocal generic freeslack : (p : @a#, sz : std.size -> void)
+
+;;
+
+pkglocal generic zallocslack = {sz : std.size -> @a#
+	/* how do allocations fail? */
+	-> (std.zbytealloc(sizeof(@a) + sz) : @a#)
+}
+
+generic make = {cap : uint32 -> chan(@a)#
+	var c = zallocslack((cap : std.size) * sizeof(cell(@a)))
+	c# = [.cap = cap, .refc = 1, .read = 1 << 32]
+	-> c
+}
+
+pkglocal generic freeslack = {p : @a#, sz : std.size -> void
+	std.bytefree((p : byte#), sizeof(@a) + sz)
+}
+
+generic drop = {c : chan(@a)# -> void
+	freeslack(c, (c.cap : std.size) * sizeof(cell(@a)))
+}
+
+generic dup = {c : chan(@a)# -> chan(@a)#
+	thread.xadd(&c.refc, 1)
+	-> c
+}
+
+generic close = {c : chan(@a)# -> void
+	thread.xadd(&c.refc, -1) /* tfw no xsub */
+}
+
+generic send = {c : chan(@a)#, elt : @a -> rc(@a)
+	for ; ; /* is this the right way to do an infinite loop? */
+		if thread.xget(&c.refc) == 0
+			-> `Closed
+		;;
+
+		var write = thread.xget(&c.write) /* not const? */
+		var index = (write : uint32)
+		var lap = (write >> 32 : uint32)
+		var cell_lap = thread.xget(&c.buf[index].lap)
+		if lap != cell_lap
+			continue /* i love wrecking my hardware */
+		;;
+
+		var write1 = index + 1 < c.cap ? \
+				write + 1 : ((lap + 2 : uint64) << 32)
+		if thread.xcas(&c.write, write, write1) == write
+			c.buf[index].elt = elt
+			thread.xset(&c.buf[index].lap, lap + 1)
+			-> `Ok `std.None
+		;;
+	;;
+	-> `Closed /* unreachable */
+}
+
+generic recv = {c : chan(@a)# -> rc(@a)
+	for ; ;
+		var read = thread.xget(&c.read)
+		var index = (read : uint32)
+		var lap = (read >> 32 : uint32)
+		var cell_lap = thread.xget(&c.buf[index].lap)
+		if lap != cell_lap
+			if thread.xget(&c.refc) == 0
+				-> `Closed
+			;;
+			continue
+		;;
+
+		var read1 = index + 1 < c.cap ? \
+				read + 1 : ((lap + 2 : uint64) << 32)
+		if thread.xcas(&c.read, read, read1) == read
+			var elt = c.buf[index].elt
+			thread.xset(&c.buf[index].lap, lap + 1)
+			-> `Ok `std.Some elt
+		;;
+	;;
+	-> `Closed /* unreachable */
+}
+
+impl iterable chan(@a)# -> @a =
+	__iternext__ = {itp : chan(@a)##, valp : @a# -> bool
+		var c = itp#
+		match chan.recv(c)
+		| `chan.Ok `std.Some elt :
+			valp# = elt
+			-> true
+		;;
+		->false
+	}
+
+	__iterfin__ = {itp : chan(@a)##, valp : @a# -> void
+	}
+;;
