@@ -2,61 +2,60 @@ use std
 use thread
 
 pkg channel =
-    type cell = struct
+    type cell(@a) = struct
         lap : uint32
-        elt : int /* tfw no parameterized types */
+        elt : @a
     ;;
 
-    type channel = struct
+    type channel(@a) = struct
         cap : uint32
         refc : uint32
         write : uint64
         read : uint64
-        buf : cell[...]
+        buf : cell(@a)[...]
     ;;
 
-    /* just these two for now */
-    const Ok : int = 0
-    const Closed : int = 1
+    type rc(@a) = union
+        `Ok std.option(@a)
+        /* `Wblock */
+        /* `Timedout */
+        `Closed
+    ;;
 
-    const make : (cap: uint32 -> channel#)
-    const drop : (c: channel# -> void)
-    const dup : (c: channel# -> channel#)
-    const close : (c: channel# -> void)
-    const send : (c: channel#, i: int -> int)
-    const recv : (c: channel# -> (int, int))
+    generic make : (cap: uint32 -> channel(@a)#)
+    generic drop : (c: channel(@a)# -> void)
+    generic dup : (c: channel(@a)# -> channel(@a)#)
+    generic close : (c: channel(@a)# -> void)
+    generic send : (c: channel(@a)#, elt: @a -> rc(@a))
+    generic recv : (c: channel(@a)# -> rc(@a))
 ;;
 
 
-const make = {cap: uint32
+generic make = {cap: uint32
     /* how do i break long lines? */
-    var c = (std.zbytealloc(sizeof(channel) + ((cap : std.size) * sizeof(cell))) : channel#)
-    /* null, nil, and none all don't appear in the standard? how do allocations
-     * fail? */
+    var c = (std.zbytealloc(sizeof(channel(@a)) + ((cap : std.size) * sizeof(cell(@a)))) : channel(@a)#)
+    /* how do allocations fail? */
     c# = [.cap = cap, .refc = 1, .read = 1 << 32]
     -> c
 }
 
-/* it seems method syntax is not a thing? impl blocks seem to be only used for
- * traits. tbh this is totally fine b/c i don't even particularly like method
- * syntax */
-const drop = {c: channel#
-    std.bytefree((c : byte#), sizeof(channel) + ((c.cap : std.size) * sizeof(cell)))
+generic drop = {c: channel(@a)#
+    std.bytefree((c : byte#), sizeof(channel(@a)) + ((c.cap : std.size) * sizeof(cell(@a))))
 }
 
-const dup = {c: channel#
+generic dup = {c: channel(@a)#
     thread.xadd(&c.refc, 1)
     -> c
 }
 
-const close = {c: channel#
+generic close = {c: channel(@a)#
     thread.xadd(&c.refc, -1) /* tfw no xsub */
 }
 
-const send = {c: channel#, i: int
+generic send = {c: channel(@a)#, elt: @a
     for ; ; /* is this the right way to do an infinite loop? */
         if thread.xget(&c.refc) == 0
-            -> Closed
+            -> `Closed
         ;;
 
         var write = thread.xget(&c.write) /* not const? */
@@ -69,15 +68,15 @@ const send = {c: channel#, i: int
 
         var write1 = index + 1 < c.cap ? write + 1 : ((lap + 2 : uint64) << 32)
         if thread.xcas(&c.write, write, write1) == write
-            c.buf[index].elt = i
+            c.buf[index].elt = elt
             thread.xset(&c.buf[index].lap, lap + 1)
-            -> Ok
+            -> `Ok `std.None
         ;;
     ;;
-    -> Closed /* unreachable */
+    -> `Closed /* unreachable */
 }
 
-const recv = {c: channel#
+generic recv = {c: channel(@a)#
     for ; ;
         var read = thread.xget(&c.read)
         var index = (read : uint32)
@@ -85,7 +84,7 @@ const recv = {c: channel#
         var cell_lap = thread.xget(&c.buf[index].lap)
         if lap != cell_lap
             if thread.xget(&c.refc) == 0
-                -> (0, Closed)
+                -> `Closed
             ;;
             continue
         ;;
@@ -94,8 +93,8 @@ const recv = {c: channel#
         if thread.xcas(&c.read, read, read1) == read
             var elt = c.buf[index].elt
             thread.xset(&c.buf[index].lap, lap + 1)
-            -> (elt, Ok)
+            -> `Ok `std.Some elt
         ;;
     ;;
-    -> (0, Closed)
+    -> `Closed /* unreachable */
 }

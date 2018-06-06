@@ -8,12 +8,14 @@ const Lim = 100000
 
 const main = {
     var c = channel.make(1)
+    /* var c : channel(int64) = channel.make(1) */ /* doesn't work */
 
     /* basic test */
     channel.send(c, 1)
     match channel.recv(c) /* rust-style if/while let syntax would be nice */
-    | (i, channel.Ok): std.put("{}\n", i)
-    | (_, channel.Closed): std.put("closed\n")
+    | `channel.Ok `std.Some i: std.put("received {}\n", i)
+    | `channel.Ok `std.None: std.put("received nothing\n")
+    | `channel.Closed: std.put("closed\n")
     ;;
 
     /* torture test */
@@ -26,12 +28,13 @@ const main = {
             var local_sum : int64 = 0
             for ; ;
                 match channel.recv(c)
-                | (i1, channel.Ok): local_sum += (i1 : int64)
-                | (_, channel.Closed): break
+                | `channel.Ok `std.Some i1: local_sum += i1
+                | `channel.Ok `std.None: std.put("received nothing\n")
+                | `channel.Closed: break
                 ;;
             ;;
             std.put("local sum: {}\n", local_sum)
-            thread.xadd(sump, (local_sum : int64))
+            thread.xadd(sump, local_sum)
             thread.xadd(donep, 1)
         })
     ;;
@@ -48,11 +51,11 @@ const main = {
     channel.close(c)
 
     /* tfw no thread.join */
-    while thread.xget(donep) < Threadc
+    while thread.xget(donep) < (Threadc : int32)
         sys.sleep(1)
     ;;
     std.put("sum:      {}\n", sum) /* needs more fencing? */
-    std.put("expected: {}\n", (((Lim : int64) * ((Lim : int64) + 1)) / 2) * (Threadc : int64))
+    std.put("expected: {}\n", ((Lim * (Lim + 1)) / 2) * Threadc)
 
     channel.drop(c)
 }
