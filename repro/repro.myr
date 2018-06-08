@@ -1,3 +1,4 @@
+/* seems to be okay due to ret acting like a barrier maybe? */
 use std
 use sys
 use thread

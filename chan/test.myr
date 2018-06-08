@@ -2,6 +2,7 @@ use std
 use sys
 use thread
 use "chan"
+use "sem"
 
 const Threadc = 16
 const Lim = 100000
@@ -13,10 +14,10 @@ const main = {
 	chan.send(c, 1)
 	/* rust-style if/while let syntax would be nice */
 	match chan.recv(c)
-	| `chan.Ok `std.Some i: std.put("received {}\n", i)
-	| `chan.Ok `std.None: std.die("received nothing\n")
-	| `chan.Wblock: std.die("would block\n")
-	| `chan.Closed: std.die("closed\n")
+	| `std.Ok `std.Some i: std.put("received {}\n", i)
+	| `std.Ok `std.None: std.die("received nothing\n")
+	| `std.Err `chan.Wblock: std.die("would block\n")
+	| `std.Err `chan.Closed: std.die("closed\n")
 	;;
 
 	/* torture test */
