@@ -1,0 +1,20 @@
+use std
+use "weird2"
+
+pkg a =
+	const foo : (n : int -> int)
+;;
+
+const foo = {n
+	for ; ;
+		match n
+		| 1:
+			std.put("one\n")
+			-> 1
+		| _: continue
+		;;
+
+		b.bar(2)
+	;;
+	-> n
+}

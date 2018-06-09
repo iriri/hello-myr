@@ -1,0 +1,16 @@
+use std
+
+const foo = {a
+	-> a > 0
+}
+
+const bar = {
+	-> 1
+}
+
+const main = {
+	var i /* nothing */
+	if foo((i = bar()))
+		std.put("{}\n", i)
+	;;
+}

@@ -1,0 +1,9 @@
+use std
+
+pkg b =
+	const bar : (n : int -> void)
+;;
+
+const bar = {n
+	std.put("{}\n", n)
+}

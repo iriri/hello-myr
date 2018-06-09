@@ -18,7 +18,7 @@ const init = {s : sem#, val : uint32 -> void
 
 const wait = {s : sem# -> void
 	for ; ;
-		var val = ~0x0/* gives undeclared warning otherwise? */
+		var val = 0/* gives undeclared warning otherwise? */
 		while (val = thread.xget(&s._val)) == 0 /* i love spinning! */
 		;;
 		if thread.xcas(&s._val, val, val - 1) == val
@@ -41,5 +41,5 @@ const trywait = {s : sem# -> bool
 }
 
 const post = {s : sem# -> void
-	thread.xadd(&s._val, -1) /* what's overflow? */
+	thread.xadd(&s._val, 1) /* what's overflow? */
 }

@@ -1,0 +1,7 @@
+use std
+use "weird1"
+
+const main = {
+	a.foo(1)
+	a.foo(2)
+}
