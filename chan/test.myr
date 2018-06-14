@@ -2,17 +2,15 @@ use std
 use sys
 use thread
 use "chan"
-use "sem"
 
 const Threadc = 16
 const Lim = 100000
 
 const main = {
-	var c : chan.chan(int64)# = chan.make(16)
+	var c : chan.chan(int64)# = chan.mk(8)
 
 	/* basic test */
 	chan.send(c, 1)
-	/* rust-style if/while let syntax would be nice */
 	match chan.recv(c)
 	| `std.Ok `std.Some i: std.put("received {}\n", i)
 	| `std.Ok `std.None: std.die("received nothing\n")
@@ -55,5 +53,5 @@ const main = {
 	std.put("sum:	  {}\n", sum)
 	std.put("expected: {}\n", ((Lim * (Lim + 1)) / 2) * Threadc)
 
-	chan.drop(c)
+	chan.free(c)
 }

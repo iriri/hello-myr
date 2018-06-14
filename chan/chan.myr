@@ -1,6 +1,5 @@
 use std
 use thread
-use "sem"
 
 pkg chan =
 	type chan(@a) = struct
@@ -10,7 +9,7 @@ pkg chan =
 		recvq : waiter#
 		write : uint64
 		read : uint64
-		lock : thread.mutex // move this when adding unbuf channels
+		lock : thread.mutex // TODO: move this when adding unbuf channels
 		buf : cell(@a)[...]
 	;;
 
@@ -21,32 +20,49 @@ pkg chan =
 
 	type chaniter(@a) = chan(@a)#
 
-	generic make : (cap : uint32 -> chan(@a)#)
-	generic drop : (c : chan(@a)# -> void)
+	type op = union
+		`Send
+		`Recv
+		// `Noop
+	;;
+
+	type set = struct
+		cases : case[:]
+		sem : thread.sem
+	;;
+
+	generic mk : (cap : uint32 -> chan(@a)#)
+	generic free : (c : chan(@a)# -> void)
 	generic dup : (c : chan(@a)# -> chan(@a)#)
 	generic close : (c : chan(@a)# -> void)
-	generic send : (c : chan(@a)#, \
-		msg : @a -> std.result(std.option(@a), err))
+	generic send : (c : chan(@a)#, msg : @a -> std.result(std.option(@a), err))
 	generic recv : (c : chan(@a)# -> std.result(std.option(@a), err))
-	generic trysend : (c : chan(@a)#, \
-		msg : @a -> std.result(std.option(@a), err))
+	generic trysend : (c : chan(@a)#, msg : @a -> std.result(std.option(@a), err))
 	generic tryrecv : (c : chan(@a)# -> std.result(std.option(@a), err))
-	generic bymsg : (c : chan(@a)# -> chaniter(@a))
 
 	impl iterable chaniter(@a) -> @a
+	generic bymsg : (c : chan(@a)# -> chaniter(@a))
 
-	/* these seem to only be necessary when linking? */
+	const mkset : (cap : uint32 -> set#)
+	const setfree : (s : set# -> void)
+	generic setadd : (s : set#, c : chan(@a)#, op : op, msg : @a# -> uint32)
+	// generic setrereg : (s : set#, id : uint32, op : op, msg : @a# -> void)
+	const select : (s : set# -> std.result(uint32, err))
+
 	pkglocal generic zallocslack : (sz : std.size -> @a#)
-	pkglocal const wqpush : (wq : waiter##, \
-		sem : sem.sem#, \
-		selinfo : std.option(selinfo) -> waiter#)
-	const wqshift : (wq : waiter## -> std.option(waiter#))
-	/* moved freeslack to the bottom of the file and now this is needed */
 	pkglocal generic freeslack : (p : @a#, sz : std.size -> void)
-	/* and why aren't these needed?
-	pkglocal const wqunblock : (wq : waiter##, \
-		lock : thread.mutex# -> void)
+	pkglocal const wqpush : \
+		(wq : waiter##, sem : thread.sem#, selinfo : std.option(selinfo) -> waiter#)
+	pkglocal const wqshift : (wq : waiter## -> std.option(waiter#))
+	/* why aren't these needed?
 	pkglocal const wqremove : (wq : waiter##, w : waiter# -> bool)
+	pkglocal const wqunblock : (wq : waiter##, lock : thread.mutex# -> void)
+	generic gentry : (c : chan(@a)#, op : op, msg : @a# -> (-> bool))
+	generic genclosed : (c : chan(@a)# -> (-> bool))
+	generic genready : (c : chan(@a)#, op : op -> (-> bool))
+	generic genwqpush : \
+		(s : set#, c : chan(@a)#, op : op, id : uint32-> (state : uint32# -> waiter#))
+	generic genwqremove : (c : chan(@a)#, op : op -> (w : waiter# -> bool))
 	*/
 ;;
 
@@ -56,59 +72,59 @@ type cell(@a) = struct
 ;;
 
 type selinfo = struct
-	state : std.option(uint32#)
-	id : std.option(uint32)
+	state : uint32#
+	id : uint32
 ;;
 
 type waiter = struct
 	prev : std.option(waiter#)
 	next : std.option(waiter#)
-	sem : sem.sem#
+	sem : thread.sem#
 	selinfo : std.option(selinfo)
 ;;
 
-generic make = {cap : uint32 -> chan(@a)#
+type case = struct
+	try : (-> bool)
+	closed : (-> bool)
+	ready : (-> bool)
+	wqpush : (state : uint32# -> waiter#)
+	wqremove : (w : waiter# -> bool)
+	done : (-> bool)
+	waiter : std.option(void#)
+;;
+
+const Selmagic = 0xffffffff
+
+generic mk = {cap : uint32 -> chan(@a)#
 	std.assert(cap > 0, "tfw no unbuf channels")
 	var c = zallocslack((cap : std.size) * sizeof(cell(@a)))
 	c# = [.cap = cap, .refc = 1, .read = 1 << 32]
 	-> c
 }
 
-generic drop = {c : chan(@a)# -> void
+generic free = {c : chan(@a)# -> void
 	freeslack(c, (c.cap : std.size) * sizeof(cell(@a)))
 }
 
 generic dup = {c : chan(@a)# -> chan(@a)#
-	std.assert(thread.xadd(&c.refc, 1) != 0,
-		"error: attempted to dup a closed channel")
+	std.assert(thread.xadd(&c.refc, 1) != 0, "error: attempted to dup a closed channel")
 	-> c
 }
 
 generic close = {c : chan(@a)# -> void
 	var refc = thread.xadd(&c.refc, -1)
 	if refc != 1
-		std.assert(refc != 0,
-			"error: attempted to close a closed channel")
+		std.assert(refc != 0, "error: attempted to close a closed channel")
 		-> void
 	;;
 
-	/* doesn't work?
 	var w
 	thread.mtxlock(&c.lock)
 	while std.canget((w = wqshift(&c.sendq)))
-	*/
-	thread.mtxlock(&c.lock)
-	for ; ;
-		match wqshift(&c.sendq)
-		| `std.Some w: sem.post(w.sem)
-		| _: break
-		;;
+		thread.sempost(std.get(w).sem)
 	;;
-	for ; ;
-		match wqshift(&c.recvq)
-		| `std.Some w: sem.post(w.sem)
-		| _: break
-		;;
+	while std.canget((w = wqshift(&c.recvq)))
+		thread.sempost(std.get(w).sem)
 	;;
 	thread.mtxunlock(&c.lock)
 }
@@ -126,8 +142,7 @@ generic trysend = {c : chan(@a)#, msg : @a -> std.result(std.option(@a), err)
 			-> `std.Err `Wblock
 		;;
 
-		var write1 = index + 1 < c.cap ? \
-				write + 1 : ((lap + 2 : uint64) << 32)
+		var write1 = index + 1 < c.cap ? write + 1 : ((lap + 2 : uint64) << 32)
 		if thread.xcas(&c.write, write, write1) == write
 			c.buf[index].msg = msg
 			thread.xset(&c.buf[index].lap, lap + 1)
@@ -150,8 +165,7 @@ generic tryrecv = {c : chan(@a)# -> std.result(std.option(@a), err)
 			-> `std.Err `Wblock
 		;;
 
-		var read1 = index + 1 < c.cap ? \
-				read + 1 : ((lap + 2 : uint64) << 32)
+		var read1 = index + 1 < c.cap ? read + 1 : ((lap + 2 : uint64) << 32)
 		if thread.xcas(&c.read, read, read1) == read
 			var msg = c.buf[index].msg
 			thread.xset(&c.buf[index].lap, lap + 1)
@@ -162,6 +176,7 @@ generic tryrecv = {c : chan(@a)# -> std.result(std.option(@a), err)
 	-> `std.Err `Closed // unreachable
 }
 
+/* TODO: refactor when adding timeouts */
 generic send = {c : chan(@a)#, msg : @a -> std.result(std.option(@a), err)
 	for ; ;
 		match trysend(c, msg)
@@ -178,22 +193,22 @@ generic send = {c : chan(@a)#, msg : @a -> std.result(std.option(@a), err)
 		;;
 		var w = wqpush(&c.sendq, &s, `std.None)
 		var write = thread.xget(&c.write)
-		var lap = (write >> 32 : uint32)
-		if lap == thread.xget(&c.buf[(write : uint32)].lap)
+		if (write >> 32 : uint32) == thread.xget(&c.buf[(write : uint32)].lap)
 			wqremove(&c.sendq, w)
 			thread.mtxunlock(&c.lock)
 			std.free(w)
 			continue
 		;;
 
-		sem.init(&s, 0)
+		s = thread.mksem(0)
 		thread.mtxunlock(&c.lock)
-		sem.wait(&s)
+		thread.semwait(&s)
 		std.free(w)
 	;;
 	-> `std.Err `Closed // unreachable
 }
 
+/* TODO: refactor when adding timeouts */
 generic recv = {c : chan(@a)# -> std.result(std.option(@a), err)
 	for ; ;
 		match tryrecv(c)
@@ -206,8 +221,7 @@ generic recv = {c : chan(@a)# -> std.result(std.option(@a), err)
 		thread.mtxlock(&c.lock)
 		var w = wqpush(&c.recvq, &s, `std.None)
 		var read = thread.xget(&c.read)
-		var lap = (read >> 32 : uint32)
-		if lap == thread.xget(&c.buf[(read : uint32)].lap)
+		if (read >> 32 : uint32) == thread.xget(&c.buf[(read : uint32)].lap)
 			wqremove(&c.recvq, w)
 			thread.mtxunlock(&c.lock)
 			std.free(w)
@@ -220,9 +234,9 @@ generic recv = {c : chan(@a)# -> std.result(std.option(@a), err)
 			-> `std.Err `Closed
 		;;
 
-		sem.init(&s, 0)
+		s = thread.mksem(0)
 		thread.mtxunlock(&c.lock)
-		sem.wait(&s)
+		thread.semwait(&s)
 		std.free(w)
 	;;
 	-> `std.Err `Closed // unreachable
@@ -246,6 +260,64 @@ impl iterable chaniter(@a) -> @a =
 	}
 ;;
 
+const mkset = {cap : uint32 -> set#
+	-> std.mk([
+		// .cases = std.slalloc((cap : std.size)), // TODO: prealloc, etc.
+		.sem = thread.mksem(0),
+	])
+}
+
+const setfree = {s : set# -> void
+	for c : s.cases
+		std.fnfree(c.try)
+		std.fnfree(c.closed)
+		std.fnfree(c.ready)
+		std.fnfree(c.wqpush)
+		std.fnfree(c.wqremove)
+
+		/* what am i doing */
+		if (c.done : void#) != (c.try : void#) || \
+			(c.done : void#[2]#)#[1] != (c.try : void#[2]#)#[1]
+			std.fnfree(c.done)
+		;;
+	;;
+	std.slfree(s.cases)
+	std.free(s)
+}
+
+generic setadd = {s : set#, c : chan(@a)#, op : op, msg : @a# -> uint32
+	var try = gentry(c, op, msg)
+
+	s.cases = std.slpush(&s.cases, [
+		.try = try,
+		.closed = genclosed(c),
+		.ready = genready(c, op),
+		.wqpush = genwqpush(s, c, op, s.cases.len - 1),
+		.wqremove = genwqremove(c, op),
+		.done = try,
+	])
+	-> s.cases.len - 1
+}
+
+/* TODO: a lot */
+const select = {s : set#
+	/* rand */
+	for ; ;
+		for var i = 0; i < s.cases.len; i++
+			if s.cases[i].try()
+				-> `std.Ok i
+			;;
+		;;
+
+		var state : uint32 = Selmagic
+		/* ready or wait */
+		/* switch on wait */
+		/* remove waiters */
+		/* call done fn */
+	;;
+	-> `std.Err `Closed
+}
+
 generic zallocslack = {sz : std.size -> @a#
 	-> (std.zbytealloc(sizeof(@a) + sz) : @a#)
 }
@@ -254,9 +326,7 @@ generic freeslack = {p : @a#, sz : std.size -> void
 	std.bytefree((p : byte#), sizeof(@a) + sz)
 }
 
-const wqpush = {wq : waiter##, \
-		sem : sem.sem#, \
-		selinfo : std.option(selinfo) -> waiter#
+const wqpush = {wq : waiter##, sem : thread.sem#, selinfo : std.option(selinfo) -> waiter#
 	var w : waiter# = std.mk([
 		.next = `std.None,
 		.sem = sem,
@@ -266,9 +336,6 @@ const wqpush = {wq : waiter##, \
 	match thread.xgetptr(wq)
 	| `std.Some q:
 		w.prev = q.prev
-		if !std.canget(w.prev)
-			std.die("DEAD\n")
-		;;
 		std.get(w.prev).next = `std.Some w
 		q.prev = `std.Some w
 	| `std.None:
@@ -303,12 +370,7 @@ const wqremove = {wq : waiter##, w : waiter# -> bool
 			prev.next = w.next
 			match w.next
 			| `std.Some next: next.prev = w.prev
-			| `std.None: // std.get(thread.xgetptr(wq)).prev = w.prev
-				var p = thread.xgetptr(wq)
-				if !std.canget(p)
-					std.die("DEAD2\n")
-				;;
-				std.get(p).prev = w.prev
+			| `std.None: std.get(thread.xgetptr(wq)).prev = w.prev
 			;;
 		;;
 		-> true
@@ -322,8 +384,71 @@ const wqunblock = {wq : waiter##, lock : thread.mutex# -> void
 		var w = wqshift(wq)
 		thread.mtxunlock(lock)
 		match w
-		| `std.Some w1: sem.post(w1.sem)
+		| `std.Some w1: thread.sempost(w1.sem)
 		| _:
 		;;
 	;;
+}
+
+generic gentry = {c : chan(@a)#, op : op, msg : @a# -> (-> bool)
+	match op
+	| `Send:
+		-> std.fndup({
+			match trysend(c, msg#)
+			| `std.Ok _: -> true
+			| _ : -> false
+			;;
+		})
+	| `Recv:
+		-> std.fndup({
+			match tryrecv(c)
+			| `std.Ok `std.Some m:
+				msg# = m
+				-> true
+			| _ : -> false
+			;;
+		})
+	;;
+}
+
+generic genclosed = {c : chan(@a)# -> (-> bool)
+	-> std.fndup({
+		-> thread.xget(&c.refc) == 0
+	})
+}
+
+generic genready = {c : chan(@a)#, op : op -> (-> bool)
+	var un
+	match op
+	| `Send: un = &c.write
+	| `Recv: un = &c.read
+	;;
+	-> std.fndup({
+		var u = thread.xget(un)
+		var lap = (u >> 32 : uint32)
+		-> (u >> 32 : uint32) == thread.xget(&c.buf[(u : uint32)].lap)
+	})
+}
+
+/* TODO: add msg when adding unbuf channels */
+generic genwqpush = {s : set#, c : chan(@a)#, op : op, id : uint32-> (state : uint32# -> waiter#)
+	var wq
+	match op
+	| `Send: wq = &c.sendq
+	| `Recv: wq = &c.recvq
+	;;
+	-> std.fndup({state : uint32#
+		-> wqpush(wq, &s.sem, `std.Some [.state = state, .id = id])
+	})
+}
+
+generic genwqremove = {c : chan(@a)#, op : op -> (w : waiter# -> bool)
+	var wq
+	match op
+	| `Send: wq = &c.sendq
+	| `Recv: wq = &c.recvq
+	;;
+	-> std.fndup({w : waiter#
+		-> wqremove(wq, w)
+	})
 }

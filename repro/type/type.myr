@@ -1,1 +1,0 @@
-use std; type foo(@a) = std.option(@a)
