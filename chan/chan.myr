@@ -8,7 +8,9 @@ pkg chan =
 		sendq : waiter#
 		recvq : waiter#
 		write : uint64
+		pad : byte[56]
 		read : uint64
+		pad1 : byte[56]
 		lock : thread.mutex // TODO: move this when adding unbuf channels
 		buf : cell(@a)[...]
 	;;
@@ -23,7 +25,7 @@ pkg chan =
 	type op = union
 		`Send
 		`Recv
-		// `Noop
+		// `Noop // is this actually useful?
 	;;
 
 	type set = struct
@@ -54,11 +56,13 @@ pkg chan =
 	pkglocal const wqpush : \
 		(wq : waiter##, sem : thread.sem#, selinfo : std.option(selinfo) -> waiter#)
 	pkglocal const wqshift : (wq : waiter## -> std.option(waiter#))
+	pkglocal generic gentry : (c : chan(@a)#, op : op, msg : @a# -> (-> bool))
 	/* why aren't these needed?
 	pkglocal const wqremove : (wq : waiter##, w : waiter# -> bool)
 	pkglocal const wqunblock : (wq : waiter##, lock : thread.mutex# -> void)
-	generic gentry : (c : chan(@a)#, op : op, msg : @a# -> (-> bool))
 	generic genclosed : (c : chan(@a)# -> (-> bool))
+	generic genlock : (c : chan(@a)# -> (-> void))
+	generic genunlock : (c : chan(@a)# -> (-> void))
 	generic genready : (c : chan(@a)#, op : op -> (-> bool))
 	generic genwqpush : \
 		(s : set#, c : chan(@a)#, op : op, id : uint32-> (state : uint32# -> waiter#))
@@ -86,14 +90,17 @@ type waiter = struct
 type case = struct
 	try : (-> bool)
 	closed : (-> bool)
+	lock : (-> void)
+	unlock : (-> void)
 	ready : (-> bool)
 	wqpush : (state : uint32# -> waiter#)
 	wqremove : (w : waiter# -> bool)
 	done : (-> bool)
-	waiter : std.option(void#)
+	waiter : std.option(waiter#)
 ;;
 
 const Selmagic = 0xffffffff
+const Selnil = 0xfffffffe
 
 generic mk = {cap : uint32 -> chan(@a)#
 	std.assert(cap > 0, "tfw no unbuf channels")
@@ -271,16 +278,19 @@ const setfree = {s : set# -> void
 	for c : s.cases
 		std.fnfree(c.try)
 		std.fnfree(c.closed)
+		std.fnfree(c.lock)
+		std.fnfree(c.unlock)
 		std.fnfree(c.ready)
 		std.fnfree(c.wqpush)
 		std.fnfree(c.wqremove)
 
-		/* what am i doing */
+		/* what am i doing lmao */
 		if (c.done : void#) != (c.try : void#) || \
 			(c.done : void#[2]#)#[1] != (c.try : void#[2]#)#[1]
 			std.fnfree(c.done)
 		;;
 	;;
+
 	std.slfree(s.cases)
 	std.free(s)
 }
@@ -291,31 +301,69 @@ generic setadd = {s : set#, c : chan(@a)#, op : op, msg : @a# -> uint32
 	s.cases = std.slpush(&s.cases, [
 		.try = try,
 		.closed = genclosed(c),
+		.lock = genlock(c),
+		.unlock = genunlock(c),
 		.ready = genready(c, op),
-		.wqpush = genwqpush(s, c, op, s.cases.len - 1),
+		.wqpush = genwqpush(s, c, op, s.cases.len),
 		.wqremove = genwqremove(c, op),
 		.done = try,
 	])
 	-> s.cases.len - 1
 }
 
-/* TODO: a lot */
+/* TODO: a lot more after adding unbuf channels and timeouts */
 const select = {s : set#
-	/* rand */
+	var off = std.rand(0, s.cases.len)
 	for ; ;
 		for var i = 0; i < s.cases.len; i++
-			if s.cases[i].try()
-				-> `std.Ok i
+			if s.cases[(i + off) % s.cases.len].try()
+				-> `std.Ok ((i + off) % s.cases.len : uint32)
 			;;
 		;;
 
 		var state : uint32 = Selmagic
-		/* ready or wait */
-		/* switch on wait */
-		/* remove waiters */
-		/* call done fn */
+		var closedc = 0
+		for var i = 0; i < s.cases.len; i++
+			var case = s.cases[(i + off) % s.cases.len]
+			if case.closed()
+				closedc++
+				continue
+			;;
+
+			case.lock()
+			case.waiter = `std.Some case.wqpush(&state)
+			if case.ready()
+				case.wqremove(std.get(case.waiter))
+				case.unlock()
+				std.free(std.get(case.waiter))
+				case.waiter = `std.None
+				goto ready
+			;;
+			case.unlock()
+		;;
+		if closedc == s.cases.len
+			-> `std.Err `Closed
+		;;
+		thread.semwait(&s.sem)
+
+:ready
+		thread.xcas(&state, Selmagic, Selnil)
+		for var i = 0; i < s.cases.len; i++
+			match s.cases[i].waiter
+			| `std.Some w:
+				s.cases[i].lock()
+				s.cases[i].wqremove(w)
+				s.cases[i].unlock()
+				std.free(w)
+				s.cases[i].waiter = `std.None
+			| `std.None:
+			;;
+		;;
+		if state < Selnil && s.cases[state].done()
+			-> `std.Ok state
+		;;
 	;;
-	-> `std.Err `Closed
+	-> `std.Err `Closed // unreachable
 }
 
 generic zallocslack = {sz : std.size -> @a#
@@ -378,29 +426,37 @@ const wqremove = {wq : waiter##, w : waiter# -> bool
 }
 
 const wqunblock = {wq : waiter##, lock : thread.mutex# -> void
-	var w = thread.xgetptr(wq)
-	if std.canget(w)
-		thread.mtxlock(lock)
-		var w = wqshift(wq)
-		thread.mtxunlock(lock)
-		match w
-		| `std.Some w1: thread.sempost(w1.sem)
-		| _:
+	for ; ;
+		if std.canget(thread.xgetptr(wq))
+			thread.mtxlock(lock)
+			var w = wqshift(wq)
+			thread.mtxunlock(lock)
+			match w
+			| `std.Some w1:
+				match w1.selinfo
+				| `std.Some s:
+					if thread.xcas(s.state, Selmagic, s.id) != Selmagic
+						continue
+					;;
+				| `std.None:
+				;;
+				thread.sempost(w1.sem)
+			| _:
+			;;
 		;;
+		-> void
 	;;
 }
 
 generic gentry = {c : chan(@a)#, op : op, msg : @a# -> (-> bool)
 	match op
-	| `Send:
-		-> std.fndup({
+	| `Send: -> std.fndup({
 			match trysend(c, msg#)
 			| `std.Ok _: -> true
 			| _ : -> false
 			;;
 		})
-	| `Recv:
-		-> std.fndup({
+	| `Recv: -> std.fndup({
 			match tryrecv(c)
 			| `std.Ok `std.Some m:
 				msg# = m
@@ -417,12 +473,25 @@ generic genclosed = {c : chan(@a)# -> (-> bool)
 	})
 }
 
+generic genlock = {c : chan(@a)# -> (-> void)
+	-> std.fndup({
+		thread.mtxlock(&c.lock)
+	})
+}
+
+generic genunlock = {c : chan(@a)# -> (-> void)
+	-> std.fndup({
+		thread.mtxunlock(&c.lock)
+	})
+}
+
 generic genready = {c : chan(@a)#, op : op -> (-> bool)
 	var un
 	match op
 	| `Send: un = &c.write
 	| `Recv: un = &c.read
 	;;
+
 	-> std.fndup({
 		var u = thread.xget(un)
 		var lap = (u >> 32 : uint32)
@@ -431,14 +500,18 @@ generic genready = {c : chan(@a)#, op : op -> (-> bool)
 }
 
 /* TODO: add msg when adding unbuf channels */
-generic genwqpush = {s : set#, c : chan(@a)#, op : op, id : uint32-> (state : uint32# -> waiter#)
+generic genwqpush = {s : set#, c : chan(@a)#, op : op, id : uint32 -> (state : uint32# -> waiter#)
 	var wq
 	match op
 	| `Send: wq = &c.sendq
 	| `Recv: wq = &c.recvq
 	;;
+
+	var sp = s // shouldn't be necessary?
+	// std.put("a: {}\n", s)
 	-> std.fndup({state : uint32#
-		-> wqpush(wq, &s.sem, `std.Some [.state = state, .id = id])
+		// std.put("b: {}\n", s)
+		-> wqpush(wq, &sp.sem, `std.Some [.state = state, .id = id])
 	})
 }
 
@@ -448,6 +521,7 @@ generic genwqremove = {c : chan(@a)#, op : op -> (w : waiter# -> bool)
 	| `Send: wq = &c.sendq
 	| `Recv: wq = &c.recvq
 	;;
+
 	-> std.fndup({w : waiter#
 		-> wqremove(wq, w)
 	})

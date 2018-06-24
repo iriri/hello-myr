@@ -1,5 +1,4 @@
 use std
-use sys
 use thread
 use "chan"
 
@@ -8,17 +7,6 @@ const Lim = 100000
 
 const main = {
 	var c : chan.chan(int64)# = chan.mk(8)
-
-	/* basic test */
-	chan.send(c, 1)
-	match chan.recv(c)
-	| `std.Ok `std.Some i: std.put("received {}\n", i)
-	| `std.Ok `std.None: std.die("received nothing\n")
-	| `std.Err `chan.Wblock: std.die("would block\n")
-	| `std.Err `chan.Closed: std.die("closed\n")
-	;;
-
-	/* torture test */
 	var sum : int64 = 0
 	var sump = &sum
 	var done : int32 = 0
@@ -46,9 +34,8 @@ const main = {
 	;;
 	chan.close(c)
 
-	/* tfw no thread.join */
 	while thread.xget(donep) < (Threadc : int32)
-		sys.sleep(1)
+		std.usleep(1000000)
 	;;
 	std.put("sum:	  {}\n", sum)
 	std.put("expected: {}\n", ((Lim * (Lim + 1)) / 2) * Threadc)

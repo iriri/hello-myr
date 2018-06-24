@@ -1,0 +1,32 @@
+use std
+
+type foo = struct
+	a : int
+;;
+
+type un = union
+	`Foo
+	`Bar
+;;
+
+const bar = {s : foo#, u : un, x : int64, y : int64, z : int64
+	std.put("a: {}\n", s)
+	-> std.fndup({p
+		std.put("b: {}\n", s)
+		std.put("c: {}\n", p)
+		-> baz(s)
+	})
+}
+
+const baz = {s
+	-> s
+}
+
+const main = {
+	var f = std.mk([
+		.a = 1234
+	])
+
+	var b = bar(f, `Foo, 0, 0, 0)
+	std.put("d: {}\n", b(f))
+}

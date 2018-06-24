@@ -1,0 +1,90 @@
+use std
+use sys
+use thread
+use "chan"
+
+const Threadc = 16
+
+type wg = struct
+	_val : thread.ftxtag
+;;
+
+const mkwg = {v : uint32 -> wg
+	-> [._val = (v : thread.ftxtag)]
+}
+
+const wgwait = {w : wg# -> void
+	var v = ~0x0
+
+	for ; ;
+		while (v = w._val) == 0
+			if thread.xcas(&w._val, v, v + 1) == v
+				-> void
+			;;
+		;;
+		thread.ftxwait(&w._val, v, (0 : sys.timespec#))
+	;;
+	-> void /* Unreachable */
+}
+
+const wgpost = {w : wg# -> void
+	var v = thread.xadd(&w._val, -1)
+	if v == 1
+		thread.ftxwake(&w._val)
+	;;
+
+}
+
+generic cantry = {v : std.result(@v, @e)
+	match v
+	| `std.Ok _: -> true
+	| `std.Err _: -> false
+	;;
+}
+
+var wg
+
+const main = {
+	var pool : chan.chan(uint32)#[Threadc]
+	var set = chan.mkset(Threadc)
+	var n = 0
+	wg = mkwg(Threadc)
+	/*
+	var wg = mkwg(Threadc)
+	var wgp = &wg
+	std.put("&wg a: {}\n", &wg)
+	*/
+
+	for var i = 0; i < Threadc; i++
+		pool[i] = chan.mk(1)
+		var c = pool[i]
+		thread.spawn({
+			// std.put("&wg b: {}\n", wgp)
+			while (cantry(chan.send(c, i)))
+				std.usleep(100000)
+			;;
+			// wgpost(wgp)
+			wgpost(&wg)
+		})
+		chan.setadd(set, pool[i], `chan.Recv, &n)
+	;;
+
+	std.usleep(10000)
+	for var i = 0; i < 64; i++
+		match chan.select(set)
+		| `std.Ok id:
+			std.put("{} {}\n", id, n)
+			std.assert(id == n, "select is broken\n")
+		| `std.Err _: std.die("select is broken\n")
+		;;
+	;;
+
+	for var i = 0; i < Threadc; i++
+		chan.close(pool[i])
+	;;
+	chan.setfree(set)
+	wgwait(&wg)
+	for var i = 0; i < Threadc; i++
+		chan.free(pool[i])
+	;;
+}

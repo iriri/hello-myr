@@ -1,0 +1,9 @@
+bin bench =
+    chan.myr
+    bench.myr
+;;
+
+bin selrecv =
+    chan.myr
+    selrecv.myr
+;;
