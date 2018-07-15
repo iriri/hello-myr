@@ -45,7 +45,7 @@ generic cantry = {v : std.result(@v, @e)
 var wg
 
 const main = {
-	var pool : chan.chan(uint32)#[Threadc]
+	var pool : chan.chan(uint32)[Threadc]
 	var set = chan.mkset(Threadc)
 	var n = 0
 	wg = mkwg(Threadc)
@@ -56,7 +56,7 @@ const main = {
 	*/
 
 	for var i = 0; i < Threadc; i++
-		pool[i] = chan.mk(1)
+		pool[i] = chan.mk(i % 2 == 0 ? 1 : 0)
 		var c = pool[i]
 		thread.spawn({
 			// std.put("&wg b: {}\n", wgp)
@@ -69,9 +69,8 @@ const main = {
 		chan.setadd(set, pool[i], `chan.Recv, &n)
 	;;
 
-	std.usleep(10000)
 	for var i = 0; i < 64; i++
-		match chan.select(set)
+		match chan.select(set, true)
 		| `std.Ok id:
 			std.put("{} {}\n", id, n)
 			std.assert(id == n, "select is broken\n")

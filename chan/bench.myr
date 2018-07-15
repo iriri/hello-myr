@@ -6,7 +6,7 @@ const Threadc = 16
 const Lim = 100000
 
 const main = {
-	var c : chan.chan(int64)# = chan.mk(8)
+	var c = chan.mk(0)
 	var sum : int64 = 0
 	var sump = &sum
 	var done : int32 = 0
