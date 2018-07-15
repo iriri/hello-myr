@@ -121,12 +121,8 @@ type bwaiter = struct
 ;;
 
 type uwaiter(@a) = struct
-	/*
 	prev : std.option(uwaiter(@a)#)
 	next : std.option(uwaiter(@a)#)
-	*/
-	prev : uwaiter(@a)#
-	next : uwaiter(@a)#
 	sem : thread.sem#
 	selinfo : std.option(selinfo)
 	closed : bool
@@ -425,14 +421,14 @@ generic usend = {c, msg
 	-> `std.Err `Closed // unreachable
 }
 
-generic send = {c : chan(@a), msg // XXX: workaround; 6m hangs without this annotation
+generic send = {c, msg
 	match c
 	| `Buf b: -> bsend(b, msg)
 	| `Unbuf u: -> usend(u, msg)
 	;;
 }
 
-generic brecv = {c : bchan(@a)# // XXX: workaround; 6m hangs without this annotation
+generic brecv = {c
 	for ; ;
 		match btryrecv(c)
 		| `std.Ok o: -> `std.Ok o
@@ -701,8 +697,6 @@ const select = {s, block
 	-> `std.Err `Closed // unreachable
 }
 
-generic Zptr : @a#  = (0 : @a#) // XXX: workaround for issue with std.option(uwaiter(@a)#)
-
 generic zallocslack = {sz : std.size -> @a#
 	-> (std.zbytealloc(sizeof(@a) + sz) : @a#)
 }
@@ -732,7 +726,7 @@ const bwqpush = {wq, sem, selinfo
 
 generic uwqpush = {wq, sem, selinfo, msg
 	var w = std.mk([
-		.next = Zptr,
+		.next = `std.None,
 		.sem = sem,
 		.selinfo = selinfo,
 		.msg = msg
@@ -741,15 +735,10 @@ generic uwqpush = {wq, sem, selinfo, msg
 	match thread.xgetptr(wq)
 	| `std.Some q:
 		w.prev = q.prev
-		/* XXX: workaround
 		std.get(w.prev).next = `std.Some w
 		q.prev = `std.Some w
-		*/
-		w.prev.next = w
-		q.prev = w
 	| `std.None:
-		// w.prev = `std.Some w // XXX: workaround
-		w.prev = w
+		w.prev = `std.Some w
 		thread.xsetptr(wq, `std.Some w)
 	;;
 	-> w
@@ -772,7 +761,6 @@ const bwqshift = {wq
 
 generic uwqshift = {wq
 	var p = thread.xgetptr(wq)
-	/* XXX workaround
 	match p
 	| `std.Some w:
 		match w.next
@@ -781,16 +769,6 @@ generic uwqshift = {wq
 		;;
 		w.prev = `std.None // for `wqremove`
 		thread.xsetptr(wq, w.next)
-	| `std.None:
-	;;
-	*/
-	match p
-	| `std.Some w:
-		if w.next != Zptr
-			w.next.prev = w.prev
-		;;
-		w.prev = Zptr // for `wqremove`
-		thread.xsetptr(wq, `std.Some w.next)
 	| `std.None:
 	;;
 	-> p
@@ -814,7 +792,6 @@ const bwqremove = {wq, w
 }
 
 generic uwqremove = {wq, w
-	/* XXX: workaround
 	match w.prev
 	| `std.None: -> false
 	| `std.Some prev:
@@ -829,21 +806,6 @@ generic uwqremove = {wq, w
 		;;
 		-> true
 	;;
-	*/
-	if w.prev == Zptr
-		-> false
-	;;
-	if w.prev == w
-		thread.xsetptr(wq, `std.None)
-	else
-		w.prev.next = w.next
-		if w.next == Zptr
-			std.get(thread.xgetptr(wq)).prev = w.prev
-		else
-			w.next.prev = w.prev
-		;;
-	;;
-	-> true
 }
 
 const bwqunblock = {wq, lock
