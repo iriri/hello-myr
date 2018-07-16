@@ -30,9 +30,9 @@ pkg chan =
 	generic dup : (c : chan(@a) -> chan(@a))
 	generic close : (c : chan(@a) -> void)
 	generic send : (c : chan(@a), msg : @a -> std.option(err))
-	generic recv : (c : chan(@a) -> std.result(std.option(@a), err))
+	generic recv : (c : chan(@a) -> std.result(@a, err))
 	generic trysend : (c : chan(@a), msg : @a -> std.option(err))
-	generic tryrecv : (c : chan(@a) -> std.result(std.option(@a), err))
+	generic tryrecv : (c : chan(@a) -> std.result(@a, err))
 	generic forcesend : (c : chan(@a), msg : @a -> std.option(err))
 
 	// impl iterable chan(@a) -> @a
@@ -50,12 +50,12 @@ pkg chan =
 	pkglocal generic uclose : (c : uchan(@a)# -> void)
 	pkglocal generic btrysend : (c : bchan(@a)#, msg : @a -> std.option(err))
 	pkglocal generic utrysend : (c : uchan(@a)#, msg : @a -> std.option(err))
-	pkglocal generic btryrecv : (c : bchan(@a)# -> std.result(std.option(@a), err))
-	pkglocal generic utryrecv : (c : uchan(@a)# -> std.result(std.option(@a), err))
+	pkglocal generic btryrecv : (c : bchan(@a)# -> std.result(@a, err))
+	pkglocal generic utryrecv : (c : uchan(@a)# -> std.result(@a, err))
 	pkglocal generic bsend : (c : bchan(@a)#, msg : @a -> std.option(err))
 	pkglocal generic usend : (c : uchan(@a)#, msg : @a -> std.option(err))
-	pkglocal generic brecv : (c : bchan(@a)# -> std.result(std.option(@a), err))
-	pkglocal generic urecv : (c : uchan(@a)# -> std.result(std.option(@a), err))
+	pkglocal generic brecv : (c : bchan(@a)# -> std.result(@a, err))
+	pkglocal generic urecv : (c : uchan(@a)# -> std.result(@a, err))
 
 	pkglocal generic zallocslack : (sz : std.size -> @a#)
 	pkglocal generic freeslack : (p : @a#, sz : std.size -> void)
@@ -305,7 +305,7 @@ generic btryrecv = {c
 			var msg = c.buf[idx].msg
 			thread.xset(&c.buf[idx].lap, lap + 1)
 			bwqunblock(&c.sendq, &c.lock)
-			-> `std.Ok `std.Some msg
+			-> `std.Ok msg
 		;;
 	;;
 	-> `std.Err `Closed // unreachable
@@ -340,13 +340,13 @@ generic utryrecv = {c
 			;;
 			var msg = w.msg#
 			thread.sempost(w.sem)
-			-> `std.Ok `std.Some msg
+			-> `std.Ok msg
 		;;
 	;;
 	-> `std.Err `Closed // unreachable
 }
 
-generic tryrecv = {c
+generic tryrecv = {c : chan(@a) // XXX: workaround; 6m hangs without this annotation
 	match c
 	| `Buf b: -> btryrecv(b)
 	| `Unbuf u: -> utryrecv(u)
@@ -489,7 +489,7 @@ generic urecv = {c
 			;;
 			var msg = w.msg#
 			thread.sempost(w.sem)
-			-> `std.Ok `std.Some msg
+			-> `std.Ok msg
 		| `std.None:
 			var s = thread.mksem(0)
 			var msg
@@ -501,7 +501,7 @@ generic urecv = {c
 				-> `std.Err `Closed
 			;;
 			std.free(w)
-			-> `std.Ok `std.Some msg
+			-> `std.Ok msg
 		;;
 	;;
 	-> `std.Err `Closed // unreachable
@@ -563,7 +563,7 @@ generic bymsg = {c
 impl iterable chaniter(@a) -> @a =
 	__iternext__ = {itp : chaniter(@a)#, valp
 		match chan.recv((itp# : chan(@a)))
-		| `std.Ok `std.Some msg :
+		| `std.Ok msg :
 			valp# = msg
 			-> true
 		| _: -> false
@@ -578,7 +578,7 @@ impl iterable chaniter(@a) -> @a =
 impl iterable chan(@a) -> @a =
 	__iternext__ = {itp : chan(@a)#, valp
 		match chan.recv(itp#)
-		| `std.Ok `std.Some msg :
+		| `std.Ok msg :
 			valp# = msg
 			-> true
 		| _: -> false
@@ -897,7 +897,7 @@ generic gentry = {c, op, msg
 		})
 	| `Recv: -> std.fndup({
 			match tryrecv(c)
-			| `std.Ok `std.Some m:
+			| `std.Ok m:
 				msg# = m
 				-> true
 			| _ : -> false
