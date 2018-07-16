@@ -1,0 +1,50 @@
+use std
+
+trait mappable @ma -> @a, @b, @mb =
+	map : (m : @ma, f : (a : @a -> @b) -> @mb)
+;;
+
+impl mappable std.option(@a) -> @a, @b, std.option(@b) =
+	map = {o, f
+		match o
+		| `std.Some v: -> `std.Some f(v)
+		| `std.None: -> `std.None
+		;;
+	}
+;;
+
+impl mappable std.result(@a, @e) -> @a, @b, std.result(@b, @e) =
+	map = {r, f
+		match r
+		| `std.Ok v: -> `std.Ok f(v)
+		| `std.Err e: -> `std.Err e
+		;;
+	}
+;;
+
+impl mappable @a[:] -> @a, @b, @b[:] =
+	map = {s, f
+		var r = std.slalloc(s.len)
+		for var i = 0; i < s.len; i++
+			r[i] = f(s[i])
+		;;
+		-> r
+	}
+;;
+
+const main = {
+	// var a = `std.Some "hello"
+	var a : std.option(byte[:]) = `std.Some "hello"
+	std.put(std.get(map(a, {s; -> std.strcat(s, " world\n")})))
+
+	var b : std.result(byte[:], int) = `std.Ok "hello"
+	// std.put(std.try(map(b, {s; -> std.strcat(s, " world\n")})))
+	var r : std.result(byte[:], int) = map(b, {s; -> std.strcat(s, " world\n")})
+	std.put(std.try(r))
+
+	var s = [0, 1, 2][:]
+	var s1 : int[:] = map(s, {n; -> n + 1})
+	for n : s1
+		std.put("{}\n", n)
+	;;
+}

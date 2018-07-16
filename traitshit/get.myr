@@ -1,0 +1,51 @@
+use std
+
+trait getable @ga -> @a =
+	get : (g : @ga -> @a)
+	canget : (g : @ga -> bool)
+;;
+
+impl getable std.option(@a) -> @a =
+	get = {o
+		match o
+		| `std.Some v: -> v
+		| `std.None: std.die("error: option had `None\n")
+		;;
+	}
+
+	canget = {o
+		match o
+		| `std.Some _: -> true
+		| `std.None: -> false
+		;;
+	}
+;;
+
+impl getable std.result(@a, @e) -> @a =
+	get = {r
+		match r
+		| `std.Ok v: -> v
+		| `std.Err e: std.fatal("error: {}\n", e)
+		;;
+	}
+
+	canget = {r
+		match r
+		| `std.Ok _: -> true
+		| `std.Err _: -> false
+		;;
+	}
+;;
+
+const main = {
+	// var a = `std.Some "hello"
+	var a : std.option(byte[:]) = `std.Some "hello world\n"
+	if canget(a)
+		std.put(get(a))
+	;;
+
+	var b : std.result(byte[:], int) = `std.Ok "hello world\n"
+	if canget(b)
+		std.put(get(b))
+	;;
+}

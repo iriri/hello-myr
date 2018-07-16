@@ -29,11 +29,11 @@ pkg chan =
 	generic free : (c : chan(@a) -> void)
 	generic dup : (c : chan(@a) -> chan(@a))
 	generic close : (c : chan(@a) -> void)
-	generic send : (c : chan(@a), msg : @a -> std.result(std.option(@a), err))
+	generic send : (c : chan(@a), msg : @a -> std.option(err))
 	generic recv : (c : chan(@a) -> std.result(std.option(@a), err))
-	generic trysend : (c : chan(@a), msg : @a -> std.result(std.option(@a), err))
+	generic trysend : (c : chan(@a), msg : @a -> std.option(err))
 	generic tryrecv : (c : chan(@a) -> std.result(std.option(@a), err))
-	generic forcesend : (c : chan(@a), msg : @a -> std.result(std.option(@a), err))
+	generic forcesend : (c : chan(@a), msg : @a -> std.option(err))
 
 	// impl iterable chan(@a) -> @a
 
@@ -48,12 +48,12 @@ pkg chan =
 
 	pkglocal generic bclose : (c : bchan(@a)# -> void)
 	pkglocal generic uclose : (c : uchan(@a)# -> void)
-	pkglocal generic btrysend : (c : bchan(@a)#, msg : @a -> std.result(std.option(@a), err))
-	pkglocal generic utrysend : (c : uchan(@a)#, msg : @a -> std.result(std.option(@a), err))
+	pkglocal generic btrysend : (c : bchan(@a)#, msg : @a -> std.option(err))
+	pkglocal generic utrysend : (c : uchan(@a)#, msg : @a -> std.option(err))
 	pkglocal generic btryrecv : (c : bchan(@a)# -> std.result(std.option(@a), err))
 	pkglocal generic utryrecv : (c : uchan(@a)# -> std.result(std.option(@a), err))
-	pkglocal generic bsend : (c : bchan(@a)#, msg : @a -> std.result(std.option(@a), err))
-	pkglocal generic usend : (c : uchan(@a)#, msg : @a -> std.result(std.option(@a), err))
+	pkglocal generic bsend : (c : bchan(@a)#, msg : @a -> std.option(err))
+	pkglocal generic usend : (c : uchan(@a)#, msg : @a -> std.option(err))
 	pkglocal generic brecv : (c : bchan(@a)# -> std.result(std.option(@a), err))
 	pkglocal generic urecv : (c : uchan(@a)# -> std.result(std.option(@a), err))
 
@@ -121,7 +121,7 @@ type bwaiter = struct
 ;;
 
 type uwaiter(@a) = struct
-	/*
+	/* XXX: workaround
 	prev : std.option(uwaiter(@a)#)
 	next : std.option(uwaiter(@a)#)
 	*/
@@ -225,14 +225,14 @@ generic close = {c
 generic btrysend = {c, msg
 	for ; ;
 		if thread.xget(&c.refc) == 0
-			-> `std.Err `Closed
+			-> `std.Some `Closed
 		;;
 
 		var write = thread.xget(&c.write)
 		var idx = (write : uint32)
 		var lap = (write >> 32 : uint32)
 		if lap != thread.xget(&c.buf[idx].lap)
-			-> `std.Err `Wblock
+			-> `std.Some `Wblock
 		;;
 
 		var write1 = idx + 1 < c.cap ? write + 1 : ((lap + 2 : uint64) << 32)
@@ -240,31 +240,31 @@ generic btrysend = {c, msg
 			c.buf[idx].msg = msg
 			thread.xset(&c.buf[idx].lap, lap + 1)
 			bwqunblock(&c.recvq, &c.lock)
-			-> `std.Ok `std.None
+			-> `std.None
 		;;
 	;;
-	-> `std.Err `Closed // unreachable
+	-> `std.Some `Closed
 }
 
 generic utrysend = {c, msg
 	for ; ;
 		if thread.xget(&c.refc) == 0
-			-> `std.Err `Closed
+			-> `std.Some `Closed
 		;;
 		if !std.canget(thread.xgetptr(&c.recvq))
-			-> `std.Err `Wblock
+			-> `std.Some `Wblock
 		;;
 
 		thread.mtxlock(&c.lock)
 		if thread.xget(&c.refc) == 0
 			thread.mtxunlock(&c.lock)
-			-> `std.Err `Closed
+			-> `std.Some `Closed
 		;;
 		var p = uwqshift(&c.recvq)
 		thread.mtxunlock(&c.lock)
 
 		match p
-		| `std.None: -> `std.Err `Wblock
+		| `std.None: -> `std.Some `Wblock
 		| `std.Some w:
 			match w.selinfo
 			| `std.Some s:
@@ -275,10 +275,10 @@ generic utrysend = {c, msg
 			;;
 			w.msg# = msg
 			thread.sempost(w.sem)
-			-> `std.Ok `std.None
+			-> `std.None
 		;;
 	;;
-	-> `std.Err `Closed // unreachable
+	-> `std.Some `Closed // unreachable
 }
 
 generic trysend = {c, msg
@@ -356,8 +356,8 @@ generic tryrecv = {c
 generic bsend = {c, msg
 	for ; ;
 		match btrysend(c, msg)
-		| `std.Ok o: -> `std.Ok o
-		| `std.Err `Closed: -> `std.Err `Closed
+		| `std.None: -> `std.None
+		| `std.Some `Closed: -> `std.Some `Closed
 		| _:
 		;;
 
@@ -365,7 +365,7 @@ generic bsend = {c, msg
 		thread.mtxlock(&c.lock)
 		if thread.xget(&c.refc) == 0
 			thread.mtxunlock(&c.lock)
-			-> `std.Err `Closed
+			-> `std.Some `Closed
 		;;
 		var w = bwqpush(&c.sendq, &s, `std.None)
 		var write = thread.xget(&c.write)
@@ -381,19 +381,19 @@ generic bsend = {c, msg
 		thread.semwait(&s)
 		std.free(w)
 	;;
-	-> `std.Err `Closed // unreachable
+	-> `std.Some `Closed // unreachable
 }
 
 generic usend = {c, msg
 	for ; ;
 		if thread.xget(&c.refc) == 0
-			-> `std.Err `Closed
+			-> `std.Some `Closed
 		;;
 
 		thread.mtxlock(&c.lock)
 		if thread.xget(&c.refc) == 0
 			thread.mtxunlock(&c.lock)
-			-> `std.Err `Closed
+			-> `std.Some `Closed
 		;;
 
 		match uwqshift(&c.recvq)
@@ -408,7 +408,7 @@ generic usend = {c, msg
 			;;
 			w.msg# = msg
 			thread.sempost(w.sem)
-			-> `std.Ok `std.None
+			-> `std.None
 		| `std.None:
 			var s = thread.mksem(0)
 			var w = uwqpush(&c.sendq, &s, `std.None, &msg)
@@ -416,16 +416,16 @@ generic usend = {c, msg
 			thread.semwait(&s)
 			if w.closed
 				std.free(w)
-				-> `std.Err `Closed
+				-> `std.Some `Closed
 			;;
 			std.free(w)
-			-> `std.Ok `std.None
+			-> `std.None
 		;;
 	;;
-	-> `std.Err `Closed // unreachable
+	-> `std.Some `Closed // unreachable
 }
 
-generic send = {c : chan(@a), msg // XXX: workaround; 6m hangs without this annotation
+generic send = {c, msg
 	match c
 	| `Buf b: -> bsend(b, msg)
 	| `Unbuf u: -> usend(u, msg)
@@ -521,7 +521,7 @@ generic forcesend = {c, msg
 		var full = false
 		for ; ;
 			if thread.xget(&b.refc) == 0
-				-> `std.Err `Closed
+				-> `std.Some `Closed
 			;;
 
 			var write = thread.xget(&b.write)
@@ -549,11 +549,11 @@ generic forcesend = {c, msg
 				b.buf[idx].msg = msg
 				thread.xset(&b.buf[idx].lap, lap + 1)
 				bwqunblock(&b.recvq, &b.lock)
-				-> full ? `std.Err `Wblock : `std.Ok `std.None // questionable
+				-> full ? `std.Some `Wblock : `std.None // questionable
 			;;
 		;;
 	;;
-	-> `std.Err `Closed // unreachable
+	-> `std.Some `Closed // unreachable
 }
 
 generic bymsg = {c
@@ -606,12 +606,6 @@ const setfree = {s
 		std.fnfree(c.ready)
 		std.fnfree(c.wqpush)
 		std.fnfree(c.rereg)
-
-		/* what am i doing lmao */
-		if (c.done : void#) != (c.try : void#) || \
-			(c.done : void#[2]#)#[1] != (c.try : void#[2]#)#[1]
-			std.fnfree(c.done)
-		;;
 	;;
 
 	std.slfree(s.cases)
@@ -732,6 +726,7 @@ const bwqpush = {wq, sem, selinfo
 
 generic uwqpush = {wq, sem, selinfo, msg
 	var w = std.mk([
+		// .next = `std.None, // XXX: workaround
 		.next = Zptr,
 		.sem = sem,
 		.selinfo = selinfo,
@@ -896,7 +891,7 @@ generic gentry = {c, op, msg
 	match op
 	| `Send: -> std.fndup({
 			match trysend(c, msg#)
-			| `std.Ok _: -> true
+			| `std.None: -> true
 			| _ : -> false
 			;;
 		})

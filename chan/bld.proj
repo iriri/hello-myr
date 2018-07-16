@@ -1,9 +1,11 @@
 bin bench =
     chan.myr
+    wg.myr
     bench.myr
 ;;
 
 bin selrecv =
     chan.myr
+    wg.myr
     selrecv.myr
 ;;

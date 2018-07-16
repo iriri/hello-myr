@@ -1,16 +1,19 @@
 use std
 use thread
 use "chan"
+use "wg"
 
-const Threadc = 16
+const Threadc : int64 = 16
 const Lim = 100000
 
+var w
+
 const main = {
-	var c = chan.mk(0)
+	var c = chan.mk(32)
 	var sum : int64 = 0
 	var sump = &sum
-	var done : int32 = 0
-	var donep = &done
+	w = wg.mk((Threadc : uint32))
+
 	for var i = 0; i < Threadc ; i++
 		thread.spawn({
 			var local_sum : int64 = 0
@@ -19,7 +22,7 @@ const main = {
 			;;
 			std.put("local sum: {}\n", local_sum)
 			thread.xadd(sump, local_sum)
-			thread.xadd(donep, 1)
+			wg.post(&w)
 		})
 	;;
 	for var i = 0; i < Threadc ; i++
@@ -34,9 +37,7 @@ const main = {
 	;;
 	chan.close(c)
 
-	while thread.xget(donep) < (Threadc : int32)
-		std.usleep(1000000)
-	;;
+	wg.wait(&w)
 	std.put("sum:	  {}\n", sum)
 	std.put("expected: {}\n", ((Lim * (Lim + 1)) / 2) * Threadc)
 

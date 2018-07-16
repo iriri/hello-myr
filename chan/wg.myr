@@ -1,0 +1,38 @@
+use thread
+use sys
+
+pkg wg =
+	type wg = struct
+		_val : thread.ftxtag
+	;;
+
+	const mk : (v : uint32 -> wg)
+	const wait : (w : wg# -> void)
+	const post : (w : wg# -> void)
+;;
+
+const mk = {v
+	-> [._val = (v : thread.ftxtag)]
+}
+
+const wait = {w
+	var v = ~0x0
+
+	for ; ;
+		while (v = w._val) == 0
+			if thread.xcas(&w._val, v, v + 1) == v
+				-> void
+			;;
+		;;
+		thread.ftxwait(&w._val, v, (0 : sys.timespec#))
+	;;
+	-> void /* Unreachable */
+}
+
+const post = {w
+	var v = thread.xadd(&w._val, -1)
+	if v == 1
+		thread.ftxwake(&w._val)
+	;;
+
+}
