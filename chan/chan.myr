@@ -294,10 +294,7 @@ generic btryrecv = {c
 		var idx = (read : uint32)
 		var lap = (read >> 32 : uint32)
 		if lap != thread.xget(&c.buf[idx].lap)
-			if thread.xget(&c.refc) == 0
-				-> `std.Err `Closed
-			;;
-			-> `std.Err `Wblock
+			-> thread.xget(&c.refc) == 0 ? `std.Err `Closed : `std.Err `Wblock
 		;;
 
 		var read1 = idx + 1 < c.cap ? read + 1 : ((lap + 2 : uint64) << 32)
@@ -981,11 +978,8 @@ generic genwqpush = {s, c, id, op, msg
 		| `Recv: wq = &b.recvq
 		;;
 
-		var sp = s // XXX: workaround for ptr not being captured properly
-		// std.put("a: {}\n", s)
 		-> std.fndup({state : uint32#
-			// std.put("b: {}\n", s)
-			var w = bwqpush(wq, &sp.sem, `std.Some [.state = state, .id = id])
+			var w = bwqpush(wq, &s.sem, `std.Some [.state = state, .id = id])
 			-> std.fndup({
 				var rem = bwqremove(wq, w)
 				std.free(w)
@@ -999,9 +993,8 @@ generic genwqpush = {s, c, id, op, msg
 		| `Recv: wq = &u.recvq
 		;;
 
-		var sp = s
 		-> std.fndup({state : uint32#
-			var w = uwqpush(wq, &sp.sem, `std.Some [.state = state, .id = id], msg)
+			var w = uwqpush(wq, &s.sem, `std.Some [.state = state, .id = id], msg)
 			-> std.fndup({
 				var rem = uwqremove(wq, w)
 				std.free(w)

@@ -5,29 +5,21 @@ use "wg"
 
 const Threadc = 16
 
-var w
-
 const main = {
 	var pool : chan.chan(uint32)[Threadc]
 	var set = chan.mkset(Threadc)
 	var n = 0
-	w = wg.mk(Threadc)
-	/* XXX: workaround for env capture issue
 	var w = wg.mk(Threadc)
 	var wp = &w
-	std.put("&w a: {}\n", &w)
-	*/
 
 	for var i = 0; i < Threadc; i++
 		pool[i] = chan.mk(i % 2 == 0 ? 1 : 0)
 		var c = pool[i]
 		thread.spawn({
-			// std.put("&w b: {}\n", wp)
 			while (!std.canget(chan.send(c, i)))
 				std.usleep(100000)
 			;;
-			// wg.post(wp)
-			wg.post(&w)
+			wg.post(wp)
 		})
 		chan.setadd(set, pool[i], `chan.Recv, &n)
 	;;
