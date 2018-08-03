@@ -1,25 +1,31 @@
 use std
 use thread
 use "chan"
-use "wg"
 
 const Threadc = 16
+
+generic cantry = {r
+	match r
+	| `std.Ok _: -> true
+	| `std.Err _ : -> false
+	;;
+}
 
 const main = {
 	var pool : chan.chan(uint32)[Threadc]
 	var set = chan.mkset(Threadc)
 	var n = 0
-	var w = wg.mk(Threadc)
+	var w = thread.mkwg(Threadc)
 	var wp = &w
 
 	for var i = 0; i < Threadc; i++
 		pool[i] = chan.mk(i % 2 == 0 ? 1 : 0)
 		var c = pool[i]
 		thread.spawn({
-			while (!std.canget(chan.send(c, i)))
+			while (cantry(chan.send(c, i)))
 				std.usleep(100000)
 			;;
-			wg.post(wp)
+			thread.wgpost(wp)
 		})
 		chan.setadd(set, pool[i], `chan.Recv, &n)
 	;;
@@ -37,7 +43,7 @@ const main = {
 		chan.close(pool[i])
 	;;
 	chan.setfree(set)
-	wg.wait(&w)
+	thread.wgwait(&w)
 	for var i = 0; i < Threadc; i++
 		chan.free(pool[i])
 	;;

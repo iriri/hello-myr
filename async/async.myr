@@ -1,0 +1,64 @@
+use std
+use thread
+use "../chan/chan"
+
+pkg async =
+	type future(@a) = struct
+		next : (-> void)
+		ready : thread.sem
+		val : @a
+	;;
+
+	const init : (thrc : uint32 -> void)
+	generic exec : (fut : future(@a)# -> void)
+	generic wait : (fut : future(@a)# -> @a)
+
+	// generic map : (fut : future(@a)#, fn : (a : @a -> @b) -> future(@b)#)
+	generic bind : (fut : future(@a)#, fn : (a : @a -> future(@b)#) -> future(@b)#)
+	generic return : (a : @a -> future(@a)#)
+;;
+
+var sched : struct
+	chan : chan.chan((-> void))
+;;
+
+const init = {thrc
+	sched.chan = chan.mk(thrc)
+	for var i = 0; i < thrc; i++
+		thread.spawn(work)
+	;;
+}
+
+const work = {
+	for f : chan.bymsg(sched.chan)
+		f()
+		std.fnfree(f) // at least try to stop the bleeding a little...
+	;;
+}
+
+generic exec = {fut
+	chan.send(sched.chan, fut.next)
+}
+
+generic wait = {fut
+	thread.semwait(&fut.ready)
+	-> fut.val
+}
+
+generic bind = {fut, fn
+	var fut1 = std.zalloc()
+	fut1.next = std.fndup({
+		fut.next()
+		thread.semwait(&fut.ready)
+		fut1.val = wait(fn(fut.val))
+		thread.sempost(&fut1.ready)
+	})
+	-> fut1
+}
+
+generic return = {a
+	-> std.mk([.next = doliterallynothing, .ready = thread.mksem(1), .val = a])
+}
+
+const doliterallynothing = {
+}

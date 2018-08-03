@@ -1,0 +1,45 @@
+use std
+use thread
+use "../chan/chan"
+use "async"
+
+const main = {
+	async.init(4)
+
+	/* kill me now */
+	var f = async.bind( \
+		async.bind( \
+			async.bind(async.return("one\n"), {a
+				std.usleep(100_000)
+				std.put(a)
+				-> async.return(2)
+			}), {a
+			std.usleep(100_000)
+			std.put("{}\n", a)
+			-> async.return("three\n")
+		}), {a
+		std.usleep(100_000)
+		std.put(a)
+		-> async.return(4)
+	})
+
+	/* i guess this is marginally better
+	var f = async.return("one\n") >| async.bind({a
+		std.usleep(100_000)
+		std.put(a)
+		-> async.return(2)
+	}) >| async.bind({a
+		std.usleep(100_000)
+		std.put(a)
+		-> async.return("three\n")
+	}) >| async.bind({a
+		std.usleep(100_000)
+		std.put(a)
+		-> async.return(4)
+	})
+	*/
+
+	async.exec(f)
+	std.put("zero\n")
+	std.put("{}\n", async.wait(f))
+}

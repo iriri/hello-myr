@@ -1,0 +1,5 @@
+bin test =
+	../chan/chan.myr
+	async.myr
+	test.myr
+;;
