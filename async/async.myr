@@ -50,8 +50,13 @@ generic bind = {fut, fn
 	fut1.next = std.fndup({
 		fut.next()
 		thread.semwait(&fut.ready)
-		fut1.val = wait(fn(fut.val))
-		thread.sempost(&fut1.ready)
+		std.put("{} {} {}\n", fut1, fut, fn) // comment out this line to die
+		chan.send(sched.chan, std.fndup({ // it's like round robin but worse
+			std.put("{} {} {}\n", fut1, fut, fn)
+			fut1.val = wait(fn(fut.val))
+			std.free(fut)
+			thread.sempost(&fut1.ready)
+		}))
 	})
 	-> fut1
 }

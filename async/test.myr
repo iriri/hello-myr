@@ -12,15 +12,33 @@ const main = {
 			async.bind(async.return("one\n"), {a
 				std.usleep(100_000)
 				std.put(a)
-				-> async.return(2)
+				-> async.return(3)
 			}), {a
-			std.usleep(100_000)
+			std.usleep(200_000)
 			std.put("{}\n", a)
-			-> async.return("three\n")
+			-> async.return("five\n")
 		}), {a
-		std.usleep(100_000)
+		std.usleep(200_000)
 		std.put(a)
-		-> async.return(4)
+		std.usleep(200_000)
+		-> async.return(7)
+	})
+
+	var f1 = async.bind( \
+		async.bind( \
+			async.bind(async.return("two\n"), {a
+				std.usleep(200_000)
+				std.put(a)
+				-> async.return(4)
+			}), {a
+			std.usleep(200_000)
+			std.put("{}\n", a)
+			-> async.return("six\n")
+		}), {a
+		std.usleep(200_000)
+		std.put(a)
+		std.usleep(200_000)
+		-> async.return(8)
 	})
 
 	/* i guess this is marginally better
@@ -40,6 +58,11 @@ const main = {
 	*/
 
 	async.exec(f)
+	async.exec(f1)
 	std.put("zero\n")
 	std.put("{}\n", async.wait(f))
+	std.put("{}\n", async.wait(f1))
+
+	std.free(f)
+	std.free(f1)
 }
