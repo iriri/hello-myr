@@ -7,7 +7,7 @@ const main = {
 	async.init(3)
 
 	/* kill me now */
-	var f = async.bind( \
+	var f = async.exec(async.bind( \
 		async.bind( \
 			async.bind(async.return("one\n"), {a
 				std.usleep(100_000)
@@ -22,9 +22,9 @@ const main = {
 		std.put(a)
 		std.usleep(200_000)
 		-> async.return(7)
-	})
+	}))
 
-	var f1 = async.map( \
+	var f1 = async.exec(async.map( \
 		async.map( \
 			async.bind(async.return("two\n"), {a
 				std.usleep(200_000)
@@ -39,27 +39,8 @@ const main = {
 		std.put(a)
 		std.usleep(200_000)
 		-> 8
-	})
+	}))
 
-	/* i guess this is marginally better
-	var f = async.return("one\n") >| async.bind({a
-		std.usleep(100_000)
-		std.put(a)
-		-> async.return(2)
-	}) >| async.bind({a
-		std.usleep(100_000)
-		std.put(a)
-		-> async.return("three\n")
-	}) >| async.bind({a
-		std.usleep(100_000)
-		std.put(a)
-		-> async.return(4)
-	})
-	*/
-
-	// async.force(f)
-	async.exec(f)
-	async.exec(f1)
 	std.put("zero\n")
 	std.put("{}\n", async.wait(f))
 	for ; ;
