@@ -4,7 +4,7 @@ use "../chan/chan"
 use "async"
 
 const main = {
-	async.init(4)
+	async.init(3)
 
 	/* kill me now */
 	var f = async.bind( \
@@ -24,8 +24,8 @@ const main = {
 		-> async.return(7)
 	})
 
-	var f1 = async.bind( \
-		async.bind( \
+	var f1 = async.map( \
+		async.map( \
 			async.bind(async.return("two\n"), {a
 				std.usleep(200_000)
 				std.put(a)
@@ -33,12 +33,12 @@ const main = {
 			}), {a
 			std.usleep(200_000)
 			std.put("{}\n", a)
-			-> async.return("six\n")
+			-> "six\n"
 		}), {a
 		std.usleep(200_000)
 		std.put(a)
 		std.usleep(200_000)
-		-> async.return(8)
+		-> 8
 	})
 
 	/* i guess this is marginally better
@@ -57,11 +57,21 @@ const main = {
 	})
 	*/
 
+	// async.force(f)
 	async.exec(f)
 	async.exec(f1)
 	std.put("zero\n")
 	std.put("{}\n", async.wait(f))
-	std.put("{}\n", async.wait(f1))
+	for ; ;
+		match async.peek(f1)
+		| `std.Some v:
+			std.put("{}\n", v)
+			break
+		| `std.None:
+			std.put("and again\n")
+			std.usleep(50_000)
+		;;
+	;;
 
 	std.free(f)
 	std.free(f1)

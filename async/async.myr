@@ -5,65 +5,95 @@ use "../chan/chan"
 pkg async =
 	type future(@a) = struct
 		next : (-> void)
+		chan : chan.chan((-> void))#
 		ready : thread.sem
 		val : @a
 	;;
 
 	const init : (thrc : uint32 -> void)
 	generic exec : (fut : future(@a)# -> void)
+	generic force : (fut : future(@a)# -> @a)
+	generic peek : (fut : future(@a)# -> std.option(@a))
 	generic wait : (fut : future(@a)# -> @a)
-
-	// generic map : (fut : future(@a)#, fn : (a : @a -> @b) -> future(@b)#)
+	generic map : (fut : future(@a)#, fn : (a : @a -> @b) -> future(@b)#)
 	generic bind : (fut : future(@a)#, fn : (a : @a -> future(@b)#) -> future(@b)#)
 	generic return : (a : @a -> future(@a)#)
 ;;
 
 var sched : struct
 	chan : chan.chan((-> void))
-;;
+	sem : thread.sem
+	ready : bool
+;; = [.sem = [._val = 1]]
 
 const init = {thrc
-	sched.chan = chan.mk(thrc)
-	for var i = 0; i < thrc; i++
-		thread.spawn(work)
+	std.assert(thrc > 0, "pls\n")
+	thread.semwait(&sched.sem)
+	if !sched.ready
+		sched.chan = chan.mk(thrc - 1)
+		for var i = 0; i < thrc; i++
+			thread.spawn({
+				for f : chan.bymsg(sched.chan)
+					f()
+					std.fnfree(f)
+				;;
+			})
+		;;
+		sched.ready = true
 	;;
+	thread.sempost(&sched.sem)
 }
 
-const work = {
-	for f : chan.bymsg(sched.chan)
-		f()
-		std.fnfree(f) // at least try to stop the bleeding a little...
-	;;
-}
+generic exec = {fut; fut.chan = &sched.chan; chan.send(sched.chan, fut.next)}
 
-generic exec = {fut
-	chan.send(sched.chan, fut.next)
-}
-
-generic wait = {fut
-	thread.semwait(&fut.ready)
+generic force = {fut;
+	fut.chan = &chan.mk(0) // this awful hack helps keeps everything under 100 loc (^:
+	fut.next()
+	std.fnfree(fut.next)
+	chan.free(fut.chan#)
 	-> fut.val
+}
+
+generic wait = {fut; thread.semwait(&fut.ready); -> fut.val}
+
+generic peek = {fut; -> thread.semtrywait(&fut.ready) ? `std.Some fut.val : `std.None}
+
+generic map = {fut, fn
+	var fut1 = std.zalloc()
+	fut1.next = std.fndup({
+		fut.chan = fut1.chan
+		fut.next()
+		thread.semwait(&fut.ready)
+		var f = std.fndup({
+			fut1.val = fn(fut.val)
+			std.free(fut)
+			thread.sempost(&fut1.ready)
+		})
+		match chan.trysend(fut.chan#, f) // it's like round robin but worse
+		| `std.Err _: f(); std.fnfree(f)
+		| `std.Ok _:
+		;;
+	})
+	-> fut1
 }
 
 generic bind = {fut, fn
 	var fut1 = std.zalloc()
 	fut1.next = std.fndup({
+		fut.chan = fut1.chan
 		fut.next()
 		thread.semwait(&fut.ready)
-		std.put("{} {} {}\n", fut1, fut, fn) // comment out this line to die
-		chan.send(sched.chan, std.fndup({ // it's like round robin but worse
-			std.put("{} {} {}\n", fut1, fut, fn)
+		var f = std.fndup({
 			fut1.val = wait(fn(fut.val))
 			std.free(fut)
 			thread.sempost(&fut1.ready)
-		}))
+		})
+		match chan.trysend(fut.chan#, f)
+		| `std.Err _: f(); std.fnfree(f)
+		| `std.Ok _:
+		;;
 	})
 	-> fut1
 }
 
-generic return = {a
-	-> std.mk([.next = doliterallynothing, .ready = thread.mksem(1), .val = a])
-}
-
-const doliterallynothing = {
-}
+generic return = {a; -> std.mk([.next = {;}, .ready = thread.mksem(1), .val = a])}
