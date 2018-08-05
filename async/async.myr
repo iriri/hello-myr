@@ -26,7 +26,8 @@ pkg async =
 ;;
 
 var sched : struct
-	later : chan.chan((-> void))
+	low : chan.chan((-> void))
+	high : chan.chan((-> void))
 	now : chan.chan((-> void))
 	sem : thread.sem
 	ready : bool
@@ -36,26 +37,43 @@ const init = {thrc
 	std.assert(thrc > 0, "don't do this to yourself\n")
 	thread.semwait(&sched.sem)
 	if !sched.ready
-		sched.later = chan.mk(thrc - 1)
+		sched.low = chan.mk(thrc * 4)
+		sched.high = chan.mk(thrc - 1)
 		sched.now = chan.mk(0)
 		for var i = 0; i < thrc; i++
-			thread.spawn({
-				for f : chan.bymsg(sched.later)
-					f()
-					std.fnfree(f)
-				;;
-			})
+			thread.spawn(work)
 		;;
 		sched.ready = true
 	;;
 	thread.sempost(&sched.sem)
 }
 
-generic spawn = {fn; chan.send(sched.later, std.fndup(fn))}
+const work = {
+	var fn
+	var set = chan.mkset(2)
+	chan.setadd(set, sched.low, `chan.Recv, &fn)
+	chan.setadd(set, sched.high, `chan.Recv, &fn)
+
+	for ; ;
+		chan.select(set, true)
+		fn()
+		std.fnfree(fn)
+		for ; ;
+			match chan.tryrecv(sched.high)
+			| `std.Ok f:
+				f()
+				std.fnfree(f)
+			| `std.Err _: break
+			;;
+		;;
+	;;
+}
+
+generic spawn = {fn; chan.send(sched.low, std.fndup(fn))}
 
 generic exec = {fut
-	fut.chan = sched.later
-	chan.send(sched.later, fut.next)
+	fut.chan = sched.high
+	chan.send(sched.low, fut.next)
 	-> fut
 }
 
@@ -66,12 +84,12 @@ generic force = {fut
 }
 
 generic fire = {fut
-	fut.chan = sched.later
-	chan.send(sched.later, std.fndup({
+	fut.chan = sched.high
+	spawn({
 		fut.next()
 		std.fnfree(fut.next)
 		std.free(fut)
-	}))
+	})
 }
 
 generic wait = {fut; thread.semwait(&fut.ready); -> fut.val}
@@ -84,6 +102,7 @@ generic map = {fut, fn
 		fut.chan = fut1.chan
 		fut.next()
 		thread.semwait(&fut.ready)
+
 		var f = std.fndup({
 			fut1.val = fn(fut.val)
 			std.free(fut)
@@ -105,6 +124,7 @@ generic bind = {fut, fn
 		fut.chan = fut1.chan
 		fut.next()
 		thread.semwait(&fut.ready)
+
 		var f = std.fndup({
 			fut1.val = wait(fn(fut.val))
 			std.free(fut)

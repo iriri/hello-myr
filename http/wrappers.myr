@@ -1,0 +1,16 @@
+use std
+use thread
+use "../async/async"
+
+pkg ahttp =
+	const slurp : (path : byte[:] -> async.future(std.result(byte[:], std.errno))#)
+;;
+
+const slurp = {path
+	var fut = std.zalloc()
+	fut.next = std.fndup({
+		fut.val = std.slurp(path)
+		thread.sempost(&fut.ready)
+	})
+	-> fut
+}

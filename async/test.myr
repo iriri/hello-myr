@@ -4,7 +4,7 @@ use "../chan/chan"
 use "async"
 
 const main = {
-	async.init(3)
+	async.init(8)
 
 	/* kill me now */
 	var f = async.exec(async.bind( \
@@ -12,39 +12,75 @@ const main = {
 			async.bind(async.return("one\n"), {a
 				std.usleep(100_000)
 				std.put(a)
-				-> async.return(3)
+				-> async.return(5)
 			}), {a
-			std.usleep(200_000)
+			std.usleep(400_000)
 			std.put("{}\n", a)
-			-> async.return("five\n")
+			-> async.return("nine\n")
 		}), {a
-		std.usleep(200_000)
+		std.usleep(400_000)
 		std.put(a)
-		std.usleep(200_000)
-		-> async.return(7)
+		std.usleep(400_000)
+		-> async.return(13)
 	}))
 
 	var f1 = async.exec(async.map( \
 		async.map( \
-			async.bind(async.return("two\n"), {a
+			async.map(async.return("two\n"), {a
 				std.usleep(200_000)
 				std.put(a)
-				-> async.return(4)
+				-> 6
 			}), {a
-			std.usleep(200_000)
+			std.usleep(400_000)
 			std.put("{}\n", a)
-			-> "six\n"
+			-> "ten\n"
 		}), {a
-		std.usleep(200_000)
+		std.usleep(400_000)
 		std.put(a)
-		std.usleep(200_000)
-		-> 8
+		std.usleep(400_000)
+		-> 14
+	}))
+
+	var f2 = async.exec(async.bind( \
+		async.map( \
+			async.bind(async.return("three\n"), {a
+				std.usleep(300_000)
+				std.put(a)
+				-> async.return(7)
+			}), {a
+			std.usleep(400_000)
+			std.put("{}\n", a)
+			-> "eleven\n"
+		}), {a
+		std.usleep(400_000)
+		std.put(a)
+		std.usleep(400_000)
+		-> async.return(15)
+	}))
+
+	var f3 = async.exec(async.map( \
+		async.bind( \
+			async.map(async.return("four\n"), {a
+				std.usleep(400_000)
+				std.put(a)
+				-> 8
+			}), {a
+			std.usleep(400_000)
+			std.put("{}\n", a)
+			-> async.return("twelve\n")
+		}), {a
+		std.usleep(400_000)
+		std.put(a)
+		std.usleep(400_000)
+		-> 16
 	}))
 
 	std.put("zero\n")
 	std.put("{}\n", async.wait(f))
+	std.put("{}\n", async.wait(f1))
+	std.put("{}\n", async.wait(f2))
 	for ; ;
-		match async.peek(f1)
+		match async.peek(f3)
 		| `std.Some v:
 			std.put("{}\n", v)
 			break
@@ -56,4 +92,6 @@ const main = {
 
 	std.free(f)
 	std.free(f1)
+	std.free(f2)
+	std.free(f3)
 }

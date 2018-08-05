@@ -1,0 +1,107 @@
+/* basically 100% copied from the stdlib version */
+use bio
+use std
+use thread
+use http
+use "../async/async"
+use "../chan/chan"
+
+pkg ahttp =
+	type server = struct
+		ann	: std.announce#
+		refs	: uint32
+		quit	: bool
+	;;
+
+	const announce	: (ds : byte[:] -> std.result(server#, http.err))
+	const shutdown	: (srv : server# -> void)
+	const serve	: \
+		(srv : server#, fn : (srv : server#, s : http.session#, req : http.req# -> void) \
+		-> void)
+	const respond	: (srv : server#, sess : http.session#, resp : http.resp# -> void)
+;;
+
+const announce = {ds
+	match std.announce(ds)
+	| `std.Err e:	-> `std.Err `http.Econn
+	| `std.Ok a:
+		-> `std.Ok std.mk([
+			.refs=1,
+			.ann=a,
+			.quit=false
+		])
+	;;
+}
+
+const serve = {srv, fn
+	while !srv.quit
+		match waitconn(srv)
+		| `std.Ok fd:
+			ref(srv)
+			async.spawn({; communicate(srv, fd, fn)})
+		| `std.Err e:	/* eh? */
+		;;
+	;;
+	unref(srv)
+}
+
+const communicate = {srv, fd, fn
+	var s
+
+	s = http.mksrvsession(fd)
+	while !srv.quit
+		match http.parsereq(s)
+		| `std.Ok req:	fn(srv, s, req)
+		| `std.Err e:	break
+		;;
+	;;
+	std.close(fd)
+	unref(srv)
+}
+
+const respond = {srv, s, resp
+	var sb
+
+	sb = std.mksb()
+	http.ioput(s, "HTTP/1.1 {} {}\r\n", resp.status, statusstr(resp.status))
+	http.ioput(s, "Content-Length: {}\r\n", resp.body.len)
+	http.ioput(s, "Encoding: {}\r\n", resp.enc)
+	for (k, v) : resp.hdrs
+		http.ioput(s, "{}: {}\r\n", k, v)
+	;;
+	http.ioput(s, "\r\n")
+	http.iowrite(s, resp.body)
+	http.ioflush(s)
+}
+
+const statusstr = {st
+	match st
+	| 200:	-> "OK"
+	| 404:	-> "Not Found"
+	| 503:	-> "Internal Error"
+	| _:	-> "Bad State"
+	;;
+}
+
+const shutdown = {srv
+	std.aclose(srv.ann)
+	srv.quit = true
+}
+
+const waitconn = {srv
+	match std.accept(srv.ann)
+	| `std.Ok fd:	-> `std.Ok fd
+	| `std.Err e:	-> `std.Err `http.Econn
+	;;
+}
+
+const ref = {srv
+	thread.xadd(&srv.refs, 1)
+}
+
+const unref = {srv
+	thread.xadd(&srv.refs, -1)
+	if thread.xget(&srv.refs) == 0
+		std.free(srv)
+	;;
+}

@@ -1,5 +1,5 @@
 bin test =
-	../chan/chan.myr
-	async.myr
 	test.myr
+	async.myr
+	../chan/chan.myr
 ;;
