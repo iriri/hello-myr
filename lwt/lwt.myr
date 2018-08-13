@@ -1,0 +1,38 @@
+use std
+use sys
+
+pkg lwt =
+	type lwt = byte
+
+	const mk   : (fn : (-> void), stksz : std.size -> lwt#)
+	const free : (lwt : lwt# -> void)
+
+	extern const swap : (src : lwt#, dst : lwt# -> void)
+
+	pkglocal const die : (-> void)
+;;
+
+const mk = {fn, stksz
+	stksz += 0x100
+	stksz &= ~0xf
+
+	var lwt = std.bytealloc(stksz)
+	(lwt : std.size#)[:8][7] = stksz
+
+	var stk = (lwt : (-> void)#)[:stksz / sizeof((-> void))]
+	stk[stk.len - 1] = die
+	stk[stk.len - 2] = fn
+
+	var p = (lwt : std.intptr) - ((lwt : std.intptr) % 0x1000 : std.intptr)
+	var sz = (lwt : std.intptr) - p + (stksz : std.intptr)
+	std.assert(sys.syscall(sys.Sysmprotect, p, sz, sys.Mprotrw | sys.Mprotexec) == 0, "rip\n")
+	-> (lwt : lwt#)
+}
+
+const free = {lwt
+	std.bytefree((lwt : byte#), (lwt : std.size#)[:8][7])
+}
+
+const die = {
+	std.die("you died\n")
+}
