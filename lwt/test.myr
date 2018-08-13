@@ -5,6 +5,13 @@ var m : lwt.lwt[0x40]
 var t, t1
 
 const main = {
+	var w = "world\n"
+	var world = {
+		for ; ;
+			std.put(w)
+			lwt.swap(t1, t)
+		;;
+	}
 	t = lwt.mk(hello, 0x1000)
 	t1 = lwt.mk(world, 0x1000)
 	lwt.swap(&m[0], t)
@@ -14,12 +21,5 @@ const hello = {
 	for ; ;
 		std.put("hello\n")
 		lwt.swap(t, t1)
-	;;
-}
-
-const world = {
-	for ; ;
-		std.put("world\n")
-		lwt.swap(t1, t)
 	;;
 }

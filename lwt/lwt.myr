@@ -12,25 +12,29 @@ pkg lwt =
 	pkglocal const die : (-> void)
 ;;
 
+const Pagesz = 0x1000
+
 const mk = {fn, stksz
 	stksz += 0x100
 	stksz &= ~0xf
 
 	var lwt = std.bytealloc(stksz)
-	(lwt : std.size#)[:8][7] = stksz
 
-	var stk = (lwt : (-> void)#)[:stksz / sizeof((-> void))]
-	stk[stk.len - 1] = die
-	stk[stk.len - 2] = fn
+	var stk = (lwt : std.size#)[:stksz / sizeof(std.size)]
+	stk[0] = (&stk[stk.len - 2] : std.size)
+	stk[1] = (&fn : std.size[2]#)#[0]
+	stk[8] = stksz
+	stk[stk.len - 2] = (&fn : std.size[2]#)#[1]
+	stk[stk.len - 1] = (&die : std.size[2]#)#[1]
 
-	var p = (lwt : std.intptr) - ((lwt : std.intptr) % 0x1000 : std.intptr)
+	var p = (lwt : std.intptr) - ((lwt : std.intptr) % Pagesz : std.intptr)
 	var sz = (lwt : std.intptr) - p + (stksz : std.intptr)
 	std.assert(sys.syscall(sys.Sysmprotect, p, sz, sys.Mprotrw | sys.Mprotexec) == 0, "rip\n")
 	-> (lwt : lwt#)
 }
 
 const free = {lwt
-	std.bytefree((lwt : byte#), (lwt : std.size#)[:8][7])
+	std.bytefree((lwt : byte#), (lwt : std.size#)[:9][8])
 }
 
 const die = {
