@@ -6,7 +6,7 @@ use "sched"
 const main = {
 	var w = "world\n"
 	var world = {
-		for ; ;
+		for var i = 0; i < 10; i++
 			std.put(w)
 			lwt.yield()
 		;;
@@ -14,14 +14,16 @@ const main = {
 	lwt.init()
 	lwt.spawn(hello)
 	lwt.spawn(world)
-	for ; ;
-		std.put("\n")
+	lwt.yield()
+	for var i = 0; i < 10; i++
+		std.put(".\n")
 		lwt.yield()
 	;;
+	std.put("done\n")
 }
 
 const hello = {
-	for ; ;
+	for var i = 0; i < 10; i++
 		std.put("hello\n")
 		lwt.yield()
 	;;

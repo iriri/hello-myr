@@ -12,16 +12,20 @@ pkg lwt =
 
 	pkglocal generic Zptr : @a# = (0 : @a#)
 
-	pkglocal const reap    : (-> void)
-	pkglocal const enqueue : (lwt : lwt# -> void)
-	pkglocal const dequeue : (-> std.option(lwt#))
+	pkglocal const reap  : (-> void)
+	pkglocal const push  : (task : task# -> void)
+	pkglocal const pop   : (-> std.option(lwt#))
+	pkglocal const shift : (-> std.option(lwt#))
+;;
+
+type task = struct
+	prev : task#
+	next : task#
+	lwt  : lwt#
 ;;
 
 var sched : struct
-	queue  : lwt#[64] /* TODO: replace this */
-	head   : std.size
-	tail   : std.size
-	prev   : lwt#
+	queue  : task#
 	curr   : lwt#
 	reaper : lwt#
 ;;
@@ -29,64 +33,95 @@ var sched : struct
 var mainstk : lwt[64]
 
 const init = {
-	sched.reaper = mk(reap, 1024)
+	sched.reaper = mk(reap, 512)
 	sched.curr = &mainstk[0]
 	-> (&mainstk[0])
 }
 
 const spawn = {fn
 	var lwt = mk(std.fndup({ // TODO: free this
+		pass()
 		fn()
 		done()
 	}), 8192)
-	enqueue(lwt)
+	switch(lwt)
 	-> lwt
 }
 
 const switch = {dst
-	if sched.prev != Zptr
-		enqueue(sched.prev)
-	;;
-	swap((sched.prev = sched.curr), (sched.curr = dst))
+	var prev = sched.curr
+	var t = [.lwt = prev]
+	push(&t)
+	swap(prev, (sched.curr = dst))
 }
 
 const pass = {
-	var t = sched.prev
-	std.assert(t != Zptr, "rip\n")
-	swap((sched.prev = sched.curr), (sched.curr = t))
-}
-
-const yield = {
-	match dequeue()
+	match pop()
 	| `std.Some lwt: switch(lwt)
-	| `std.None:
-		if sched.prev != Zptr
-			pass()
-		;;
+	| `std.None: std.die("rip\n")
 	;;
 }
 
-const done = { // TODO: this doesn't work (lwts are still in queue)
+const yield = {
+	match shift()
+	| `std.Some lwt: switch(lwt)
+	| `std.None:
+	;;
+}
+
+const done = {
 	switch(sched.reaper)
 }
 
 const reap = {
 	for ; ;
-		free(sched.prev)
-		match dequeue()
-		| `std.Some lwt:
-			sched.prev = Zptr
-			swap(sched.reaper, lwt)
+		match pop()
+		| `std.Some lwt: free(lwt)
+		| `std.None: std.die("how\n")
+		;;
+		match shift()
+		| `std.Some lwt: swap(sched.reaper, (sched.curr = lwt))
 		| `std.None: std.exit(0)
 		;;
 	;;
 }
 
-const enqueue = {lwt
-	std.assert(sched.tail - sched.head < 64, "TODO: replace this\n")
-	sched.queue[sched.tail++ & 63] = lwt
+const push = {task
+	match sched.queue
+	| Zptr:
+		task.prev = task
+		sched.queue = task
+	| q:
+		task.prev = q.prev
+		q.prev.next = task
+		q.prev = task
+	;;
 }
 
-const dequeue = {
-	-> sched.head != sched.tail ? `std.Some sched.queue[sched.head++ & 63] : `std.None
+const pop = {
+	if sched.queue == Zptr
+		-> `std.None
+	;;
+
+	var t = sched.queue.prev
+	if t.prev == t
+		sched.queue = Zptr
+	else
+		sched.queue.prev = t.prev
+		t.prev.next = Zptr
+	;;
+	-> `std.Some t.lwt
+}
+
+const shift = {
+	if sched.queue == Zptr
+		-> `std.None
+	;;
+
+	var t = sched.queue
+	if t.next != Zptr
+		t.next.prev = t.prev
+	;;
+	sched.queue = t.next
+	-> `std.Some t.lwt
 }
