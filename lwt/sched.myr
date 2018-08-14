@@ -1,0 +1,92 @@
+use std
+
+use "lwt"
+
+pkg lwt =
+	const init   : (-> lwt#)
+	const spawn  : (fn : (-> void) -> lwt#)
+	const switch : (dst : lwt# -> void)
+	const pass   : (-> void)
+	const yield  : (-> void)
+	const done   : (-> void)
+
+	pkglocal generic Zptr : @a# = (0 : @a#)
+
+	pkglocal const reap    : (-> void)
+	pkglocal const enqueue : (lwt : lwt# -> void)
+	pkglocal const dequeue : (-> std.option(lwt#))
+;;
+
+var sched : struct
+	queue  : lwt#[64] /* TODO: replace this */
+	head   : std.size
+	tail   : std.size
+	prev   : lwt#
+	curr   : lwt#
+	reaper : lwt#
+;;
+
+var mainstk : lwt[64]
+
+const init = {
+	sched.reaper = mk(reap, 1024)
+	sched.curr = &mainstk[0]
+	-> (&mainstk[0])
+}
+
+const spawn = {fn
+	var lwt = mk(std.fndup({ // TODO: free this
+		fn()
+		done()
+	}), 8192)
+	enqueue(lwt)
+	-> lwt
+}
+
+const switch = {dst
+	if sched.prev != Zptr
+		enqueue(sched.prev)
+	;;
+	swap((sched.prev = sched.curr), (sched.curr = dst))
+}
+
+const pass = {
+	var t = sched.prev
+	std.assert(t != Zptr, "rip\n")
+	swap((sched.prev = sched.curr), (sched.curr = t))
+}
+
+const yield = {
+	match dequeue()
+	| `std.Some lwt: switch(lwt)
+	| `std.None:
+		if sched.prev != Zptr
+			pass()
+		;;
+	;;
+}
+
+const done = { // TODO: this doesn't work (lwts are still in queue)
+	switch(sched.reaper)
+}
+
+const reap = {
+	for ; ;
+		free(sched.prev)
+		match dequeue()
+		| `std.Some lwt:
+			sched.prev = Zptr
+			swap(sched.reaper, lwt)
+		| `std.None: std.exit(0)
+		;;
+	;;
+}
+
+const enqueue = {lwt
+	std.assert(sched.tail - sched.head < 64, "TODO: replace this\n")
+	sched.queue[sched.tail++ & 63] = lwt
+}
+
+const dequeue = {
+	-> sched.head != sched.tail ? `std.Some sched.queue[sched.head++ & 63] : `std.None
+}

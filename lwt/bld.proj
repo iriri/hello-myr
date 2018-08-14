@@ -2,4 +2,5 @@ bin test =
 	test.myr
 	lwt.myr
 	lwt-impl+x64.s
+	sched.myr
 ;;

@@ -1,26 +1,17 @@
 use std
-use sys
 
 pkg lwt =
 	type lwt = byte
 
-	const init : (-> lwt#)
-	const mk   : (fn : (-> void), stksz : std.size -> lwt#)
-	const free : (lwt : lwt# -> void)
-
+	const mk          : (fn : (-> void), stksz : std.size -> lwt#)
+	const free        : (lwt : lwt# -> void)
 	extern const swap : (src : lwt#, dst : lwt# -> void)
 
 	pkglocal const die : (-> void)
 ;;
 
-var mainstk : lwt[0x40]
-
-const init = {
-	-> (&mainstk[0])
-}
-
 const mk = {fn, stksz
-	stksz += 0x57 /* 0x48 + 0xf */
+	stksz += 0x57 /* 0x40 for registers, 0x8 for stksz, 0xf for rounding */
 	stksz &= ~0xf
 
 	var lwt = std.bytealloc(stksz)

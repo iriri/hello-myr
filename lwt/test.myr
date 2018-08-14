@@ -1,28 +1,28 @@
 use std
-use "lwt"
 
-var t, t1
+use "lwt"
+use "sched"
 
 const main = {
-	var m = lwt.init()
 	var w = "world\n"
 	var world = {
 		for ; ;
 			std.put(w)
-			lwt.swap(t1, m)
+			lwt.yield()
 		;;
 	}
-	t = lwt.mk(hello, 0x1000)
-	t1 = lwt.mk(world, 0x1000)
+	lwt.init()
+	lwt.spawn(hello)
+	lwt.spawn(world)
 	for ; ;
 		std.put("\n")
-		lwt.swap(m, t)
+		lwt.yield()
 	;;
 }
 
 const hello = {
 	for ; ;
 		std.put("hello\n")
-		lwt.swap(t, t1)
+		lwt.yield()
 	;;
 }
