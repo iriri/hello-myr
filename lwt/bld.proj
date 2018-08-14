@@ -1,5 +1,5 @@
 bin test =
 	test.myr
 	lwt.myr
-	lwt-x64.s
+	lwt-impl+x64.s
 ;;
