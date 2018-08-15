@@ -8,6 +8,7 @@ pkg lwt =
 	const switch : (dst : lwt# -> void)
 	const pass   : (-> void)
 	const yield  : (-> void)
+	const block  : (-> void)
 	const done   : (-> void)
 
 	pkglocal generic Zptr : @a# = (0 : @a#)
@@ -16,11 +17,12 @@ pkg lwt =
 	pkglocal const push  : (task : task# -> void)
 	pkglocal const pop   : (-> std.option(lwt#))
 	pkglocal const shift : (-> std.option(lwt#))
+	pkglocal const curr  : (-> lwt#)
 ;;
 
 type task = struct
-	prev : task#
 	next : task#
+	prev : task#
 	lwt  : lwt#
 ;;
 
@@ -39,11 +41,7 @@ const init = {
 }
 
 const spawn = {fn
-	var lwt = mk(std.fndup({ // TODO: free this
-		pass()
-		fn()
-		done()
-	}), 8192)
+	var lwt = _mk(fn, 8192, done)
 	switch(lwt)
 	-> lwt
 }
@@ -66,6 +64,15 @@ const yield = {
 	match shift()
 	| `std.Some lwt: switch(lwt)
 	| `std.None:
+	;;
+}
+
+const block = {
+	match shift()
+	| `std.Some lwt:
+		var prev = sched.curr
+		swap(prev, (sched.curr = lwt))
+	| `std.None: std.die("you deadlocked\n")
 	;;
 }
 
@@ -124,4 +131,8 @@ const shift = {
 	;;
 	sched.queue = t.next
 	-> `std.Some t.lwt
+}
+
+const curr = {
+	-> sched.curr
 }

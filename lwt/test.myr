@@ -2,29 +2,49 @@ use std
 
 use "lwt"
 use "sched"
+use "chan"
 
 const main = {
-	var w = "world\n"
-	var world = {
-		for var i = 0; i < 10; i++
-			std.put(w)
-			lwt.yield()
+	var ci = lwt.mkch()
+	var cs = lwt.mkch()
+	var fizzer = {
+		for ; ;
+			var i = lwt.chrecv(ci)
+			if i % 3 == 0
+				std.put("fizz")
+			;;
+			lwt.chsend(ci, i)
 		;;
 	}
-	lwt.init()
-	lwt.spawn(hello)
-	lwt.spawn(world)
-	lwt.yield()
-	for var i = 0; i < 10; i++
-		std.put(".\n")
-		lwt.yield()
-	;;
-	std.put("done\n")
-}
+	var buzzer = {
+		for ; ;
+			var i = lwt.chrecv(ci)
+			if i % 5 == 0
+				std.put("buzz")
+			;;
+			lwt.chsend(ci, i)
+		;;
+	}
+	var notfizzerorbuzzerbutstillimportant = {
+		for ; ;
+			var i = lwt.chrecv(ci)
+			lwt.yield() // lol
+			if i % 3 != 0 && i % 5 != 0
+				lwt.chsend(cs, std.fmt("{}\n", i))
+			else
+				lwt.chsend(cs, std.fmt("\n"))
+			;;
+		;;
+	}
 
-const hello = {
-	for var i = 0; i < 10; i++
-		std.put("hello\n")
-		lwt.yield()
+	lwt.init()
+	lwt.spawn(fizzer)
+	lwt.spawn(buzzer)
+	lwt.spawn(notfizzerorbuzzerbutstillimportant)
+	for var i = 1; i <= 100; i++
+		lwt.chsend(ci, i)
+		var s = lwt.chrecv(cs)
+		std.put(s)
+		std.slfree(s)
 	;;
 }

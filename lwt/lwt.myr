@@ -7,20 +7,25 @@ pkg lwt =
 	const free        : (lwt : lwt# -> void)
 	extern const swap : (src : lwt#, dst : lwt# -> void)
 
+	pkglocal const _mk : (fn : (-> void), stksz : std.size, diefn : (-> void) -> lwt#)
 	pkglocal const die : (-> void)
 ;;
 
 const mk = {fn, stksz
+	-> _mk(fn, stksz, die)
+}
+
+const _mk = {fn, stksz, diefn
 	stksz += 0x57 /* 0x40 for registers, 0x8 for stksz, 0xf for rounding */
 	stksz &= ~0xf
 
 	var lwt = std.bytealloc(stksz)
 	var stk = (lwt : std.size#)[:stksz / sizeof(std.size)]
 	stk[0] = (&stk[stk.len - 2] : std.size)
-	stk[1] = (&fn : std.size[2]#)#[0]
+	stk[2] = (&fn : std.size[2]#)#[0]
 	stk[8] = stksz
 	stk[stk.len - 2] = (&fn : std.size[2]#)#[1]
-	stk[stk.len - 1] = (&die : std.size[2]#)#[1]
+	stk[stk.len - 1] = (&diefn : std.size[2]#)#[1]
 	-> (lwt : lwt#)
 }
 

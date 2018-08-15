@@ -1,0 +1,74 @@
+use std
+
+use "lwt"
+use "sched"
+
+pkg lwt =
+	type chan(@a) = struct
+		sendq : waitq(@a)
+		recvq : waitq(@a)
+	;;
+
+	generic mkch   : (-> chan(@a)#)
+	generic chsend : (c : chan(@a)#, msg : @a -> void)
+	generic chrecv : (c : chan(@a)# -> @a)
+;;
+
+type waiter(@a) = struct
+	next : waiter(@a)#
+	lwt  : lwt#
+	msg  : @a
+;;
+
+type waitq(@a) = struct
+	head : waiter(@a)#
+	tail : waiter(@a)#
+;;
+
+generic mkch = {
+	-> std.zalloc()
+}
+
+generic chsend = {c, msg
+	match c.recvq.head
+	| Zptr:
+		var w = [.lwt = curr(), .msg = msg]
+		match c.sendq.tail
+		| Zptr: c.sendq.head = c.sendq.tail = &w
+		| _:
+			c.sendq.tail.next = &w
+			c.sendq.tail = &w
+		;;
+		block()
+	| w:
+		w.msg = msg
+		c.recvq.head = w.next
+		if c.recvq.tail == w
+			c.recvq.tail = Zptr
+		;;
+		switch(w.lwt)
+	;;
+}
+
+generic chrecv = {c
+	match c.sendq.head
+	| Zptr:
+		var w = [.lwt = curr()]
+		match c.recvq.tail
+		| Zptr: c.recvq.head = c.recvq.tail = &w
+		| _:
+			c.recvq.tail.next = &w
+			c.recvq.tail = &w
+		;;
+		block()
+		-> w.msg
+	| w:
+		c.sendq.head = w.next
+		if c.sendq.tail == w
+			c.sendq.tail = Zptr
+		;;
+		var msg = w.msg
+		switch(w.lwt)
+		-> msg
+	;;
+}
