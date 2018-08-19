@@ -1,38 +1,54 @@
 use std
 
 pkg lwt =
-	type lwt = byte
+	type lwt = struct
+		rsp  : void#
+		rbp  : void#
+		rax  : void#
+		rbx  : void#
+		r12  : void#
+		r13  : void#
+		r14  : void#
+		r15  : void#
+		next : lwt#
+		prev : lwt#
+		sz   : std.size
+		stk  : void#[...]
+	;;
 
 	const mk          : (fn : (-> void), stksz : std.size -> lwt#)
 	const free        : (lwt : lwt# -> void)
 	extern const swap : (src : lwt#, dst : lwt# -> void)
 
-	pkglocal const _mk : (fn : (-> void), stksz : std.size, diefn : (-> void) -> lwt#)
-	pkglocal const die : (-> void)
+	pkglocal const _mk  : (fn : (-> void), stksz : std.size, diefn : (-> void) -> lwt#)
+	pkglocal const ovfl : (-> void)
 ;;
 
 const mk = {fn, stksz
-	-> _mk(fn, stksz, die)
+	-> _mk(fn, stksz, ret)
 }
 
 const _mk = {fn, stksz, diefn
-	stksz += 0x57 /* 0x40 for registers, 0x8 for stksz, 0xf for rounding */
-	stksz &= ~0xf
+	var sz = (stksz + sizeof(lwt) + 0x40f) & ~0xf
+	var lwt = (std.bytealloc(sz) : lwt#)
+	var stklen = (sz - sizeof(lwt)) / sizeof(void#)
 
-	var lwt = std.bytealloc(stksz)
-	var stk = (lwt : std.size#)[:stksz / sizeof(std.size)]
-	stk[0] = (&stk[stk.len - 2] : std.size)
-	stk[2] = (&fn : std.size[2]#)#[0]
-	stk[8] = stksz
-	stk[stk.len - 2] = (&fn : std.size[2]#)#[1]
-	stk[stk.len - 1] = (&diefn : std.size[2]#)#[1]
-	-> (lwt : lwt#)
+	lwt.rsp = (&lwt.stk[stklen - 2] : void#)
+	lwt.rax = (&fn : void#[2]#)#[0]
+	lwt.sz = sz
+	lwt.stk[stklen - 2] = (&fn : void#[2]#)#[1]
+	lwt.stk[stklen - 1] = (&diefn : void#[2]#)#[1]
+	-> lwt
 }
 
 const free = {lwt
-	std.bytefree((lwt : byte#), (lwt : std.size#)[:9][8])
+	std.bytefree((lwt : byte#), lwt.sz)
 }
 
-const die = {
-	std.die("you died\n")
+const ret = {
+	std.die("a lwt's fn returned instead of cleaning itself up\n")
+}
+
+const ovfl = {
+	std.die("a lwt's stack overflowed\n")
 }

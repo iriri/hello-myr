@@ -13,31 +13,25 @@ pkg lwt =
 
 	pkglocal generic Zptr : @a# = (0 : @a#)
 
-	pkglocal const reap  : (-> void)
-	pkglocal const push  : (task : task# -> void)
-	pkglocal const pop   : (-> std.option(lwt#))
-	pkglocal const shift : (-> std.option(lwt#))
-	pkglocal const curr  : (-> lwt#)
-;;
-
-type task = struct
-	next : task#
-	prev : task#
-	lwt  : lwt#
+	pkglocal const reap    : (-> void)
+	pkglocal const push    : (lwt : lwt# -> void)
+	pkglocal const unshift : (lwt : lwt# -> void)
+	pkglocal const pop     : (-> std.option(lwt#))
+	pkglocal const shift   : (-> std.option(lwt#))
+	pkglocal const curr    : (-> lwt#)
 ;;
 
 var sched : struct
-	queue  : task#
+	queue  : lwt#
 	curr   : lwt#
 	reaper : lwt#
 ;;
 
-var mainstk : lwt[64]
+var mainstk : lwt
 
 const init = {
-	sched.reaper = mk(reap, 512)
-	sched.curr = &mainstk[0]
-	-> (&mainstk[0])
+	sched.reaper = mk(reap, 256)
+	-> (sched.curr = &mainstk)
 }
 
 const spawn = {fn
@@ -48,8 +42,7 @@ const spawn = {fn
 
 const switch = {dst
 	var prev = sched.curr
-	var t = [.lwt = prev]
-	push(&t)
+	push(prev)
 	swap(prev, (sched.curr = dst))
 }
 
@@ -93,16 +86,29 @@ const reap = {
 	;;
 }
 
-const push = {task
+const push = {lwt
+	lwt.next = Zptr
 	match sched.queue
 	| Zptr:
-		task.prev = task
-		sched.queue = task
+		lwt.prev = lwt
+		sched.queue = lwt
 	| q:
-		task.prev = q.prev
-		q.prev.next = task
-		q.prev = task
+		lwt.prev = q.prev
+		q.prev.next = lwt
+		q.prev = lwt
 	;;
+}
+
+const unshift = {lwt
+	lwt.next = sched.queue
+	match sched.queue
+	| Zptr:
+		lwt.prev = lwt
+	| q:
+		lwt.prev = q.prev
+		q.prev = lwt
+	;;
+	sched.queue = lwt
 }
 
 const pop = {
@@ -110,14 +116,14 @@ const pop = {
 		-> `std.None
 	;;
 
-	var t = sched.queue.prev
-	if t.prev == t
+	var lwt = sched.queue.prev
+	if lwt.prev == lwt
 		sched.queue = Zptr
 	else
-		sched.queue.prev = t.prev
-		t.prev.next = Zptr
+		sched.queue.prev = lwt.prev
+		lwt.prev.next = Zptr
 	;;
-	-> `std.Some t.lwt
+	-> `std.Some lwt
 }
 
 const shift = {
@@ -125,12 +131,12 @@ const shift = {
 		-> `std.None
 	;;
 
-	var t = sched.queue
-	if t.next != Zptr
-		t.next.prev = t.prev
+	var lwt = sched.queue
+	if lwt.next != Zptr
+		lwt.next.prev = lwt.prev
 	;;
-	sched.queue = t.next
-	-> `std.Some t.lwt
+	sched.queue = lwt.next
+	-> `std.Some lwt
 }
 
 const curr = {

@@ -10,6 +10,7 @@ pkg lwt =
 	;;
 
 	generic mkch   : (-> chan(@a)#)
+	generic chfree : (c : chan(@a)# -> void)
 	generic chsend : (c : chan(@a)#, msg : @a -> void)
 	generic chrecv : (c : chan(@a)# -> @a)
 ;;
@@ -27,6 +28,10 @@ type waitq(@a) = struct
 
 generic mkch = {
 	-> std.zalloc()
+}
+
+generic chfree = {c
+	std.free(c)
 }
 
 generic chsend = {c, msg
@@ -68,7 +73,7 @@ generic chrecv = {c
 			c.sendq.tail = Zptr
 		;;
 		var msg = w.msg
-		switch(w.lwt)
+		unshift(w.lwt)
 		-> msg
 	;;
 }
