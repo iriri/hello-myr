@@ -1,11 +1,9 @@
 use std
 use thread
-use "../chan/chan"
+
 use "async"
 
 const main = {
-	async.init(8)
-
 	/* kill me now */
 	var f = async.exec(async.bind( \
 		async.bind( \
@@ -94,4 +92,12 @@ const main = {
 	std.free(f1)
 	std.free(f2)
 	std.free(f3)
+
+	var f4 = async.do({
+		std.usleep(1_000_000)
+		-> 123456789
+	})
+	std.put("{}\n", async.wait(f4))
+	std.free(f4)
+
 }

@@ -1,105 +1,64 @@
 use std
 use thread
-use "../chan/chan"
 
 pkg async =
 	type future(@a) = struct
-		next : (-> void)
-		chan : chan.chan((-> void))
+		next  : (-> void)
 		ready : thread.sem
-		val : @a
+		val   : @a
 	;;
 
-	const init : (thrc : uint32 -> void)
-	generic spawn : (fn : (-> void) -> void)
+	generic do : (fn : (-> @a) -> future(@a)#)
 
-	generic exec : (fut : future(@a)# -> future(@a)#)
+	generic exec  : (fut : future(@a)# -> future(@a)#)
 	generic force : (fut : future(@a)# -> future(@a)#)
-	generic fire : (fut : future(@a)# -> void)
+	generic fire  : (fut : future(@a)# -> void)
 
 	generic wait : (fut : future(@a)# -> @a)
 	generic peek : (fut : future(@a)# -> std.option(@a))
 
-	generic map : (fut : future(@a)#, fn : (a : @a -> @b) -> future(@b)#)
-	generic bind : (fut : future(@a)#, fn : (a : @a -> future(@b)#) -> future(@b)#)
+	generic map    : (fut : future(@a)#, fn : (a : @a -> @b) -> future(@b)#)
+	generic bind   : (fut : future(@a)#, fn : (a : @a -> future(@b)#) -> future(@b)#)
 	generic return : (a : @a -> future(@a)#)
 ;;
 
-var sched : struct
-	low : chan.chan((-> void))
-	high : chan.chan((-> void))
-	now : chan.chan((-> void))
-	sem : thread.sem
-	ready : bool
-;; = [.sem = [._val = 1]]
-
-const init = {thrc
-	std.assert(thrc > 0, "don't do this to yourself\n")
-	thread.semwait(&sched.sem)
-	if !sched.ready
-		sched.low = chan.mk(thrc * 4)
-		sched.high = chan.mk(thrc - 1)
-		sched.now = chan.mk(0)
-		for var i = 0; i < thrc; i++
-			thread.spawn(work)
-		;;
-		sched.ready = true
-	;;
-	thread.sempost(&sched.sem)
+generic do = {fn
+	var fut = std.zalloc()
+	thread.spawn({
+		fut.val = fn()
+		thread.sempost(&fut.ready)
+	})
+	-> fut
 }
-
-const work = {
-	var fn
-	var set = chan.mkset(2)
-	chan.setadd(set, sched.low, `chan.Recv, &fn)
-	chan.setadd(set, sched.high, `chan.Recv, &fn)
-
-	for ; ;
-		chan.select(set, true)
-		fn()
-		std.fnfree(fn)
-		for ; ;
-			match chan.tryrecv(sched.high)
-			| `std.Ok f:
-				f()
-				std.fnfree(f)
-			| `std.Err _: break
-			;;
-		;;
-	;;
-}
-
-generic spawn = {fn; chan.send(sched.low, std.fndup(fn))}
 
 generic exec = {fut
-	fut.chan = sched.high
-	chan.send(sched.low, fut.next)
+	thread.spawn(fut.next)
 	-> fut
 }
 
 generic force = {fut
-	fut.chan = sched.now
 	fut.next()
 	-> fut
 }
 
 generic fire = {fut
-	fut.chan = sched.high
-	spawn({
+	thread.spawn({
 		fut.next()
 		std.fnfree(fut.next)
 		std.free(fut)
 	})
 }
 
-generic wait = {fut; thread.semwait(&fut.ready); -> fut.val}
+generic wait = {fut
+	thread.semwait(&fut.ready)
+	-> fut.val
+}
 
 generic peek = {fut; -> thread.semtrywait(&fut.ready) ? `std.Some fut.val : `std.None}
 
 generic map = {fut, fn
 	var fut1 = std.zalloc()
 	fut1.next = std.fndup({
-		fut.chan = fut1.chan
 		fut.next()
 		thread.semwait(&fut.ready)
 
@@ -108,12 +67,8 @@ generic map = {fut, fn
 			std.free(fut)
 			thread.sempost(&fut1.ready)
 		})
-		match chan.trysend(fut.chan, f) // it's like round robin but worse
-		| `std.Err _:
-			f();
-			std.fnfree(f)
-		| `std.Ok _:
-		;;
+		f();
+		std.fnfree(f)
 	})
 	-> fut1
 }
@@ -121,7 +76,6 @@ generic map = {fut, fn
 generic bind = {fut, fn
 	var fut1 = std.zalloc()
 	fut1.next = std.fndup({
-		fut.chan = fut1.chan
 		fut.next()
 		thread.semwait(&fut.ready)
 
@@ -130,14 +84,16 @@ generic bind = {fut, fn
 			std.free(fut)
 			thread.sempost(&fut1.ready)
 		})
-		match chan.trysend(fut.chan, f)
-		| `std.Err _:
-			f();
-			std.fnfree(f)
-		| `std.Ok _:
-		;;
+		f();
+		std.fnfree(f)
 	})
 	-> fut1
 }
 
-generic return = {a; -> std.mk([.next = {;}, .ready = thread.mksem(1), .val = a])}
+generic return = {a
+	-> std.mk([
+		.next = {;},
+		.ready = thread.mksem(1),
+		.val = a,
+	])
+}

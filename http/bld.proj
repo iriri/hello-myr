@@ -1,7 +1,0 @@
-bin test =
-	test.myr
-	server.myr
-	wrappers.myr
-	../async/async.myr
-	../chan/chan.myr
-;;
