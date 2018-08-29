@@ -1,0 +1,9 @@
+use std
+
+use "tls"
+
+const main = {
+	var p = std.mk(1)
+	tls.setfs(p)
+	std.put("{} {}\n", tls.getfs(), p)
+}

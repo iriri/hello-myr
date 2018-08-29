@@ -1,0 +1,5 @@
+bin test =
+	test.myr
+	tls.myr
+	tls-impl.s
+;;

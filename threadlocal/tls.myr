@@ -1,0 +1,4 @@
+pkg tls =
+	extern const setfs : (p : int# -> void)
+	extern const getfs : (-> int#)
+;;
