@@ -1,6 +1,9 @@
 use std
+use thread
 
 use "lwt"
+use "tls"
+use "types"
 
 pkg lwt =
 	const init   : (-> lwt#)
@@ -9,89 +12,127 @@ pkg lwt =
 	const pass   : (-> void)
 	const yield  : (-> void)
 	const block  : (-> void)
-	const done   : (-> void)
+	const curr   : (-> lwt#)
 
 	pkglocal generic Zptr : @a# = (0 : @a#)
 
+	pkglocal const done    : (-> void)
 	pkglocal const reap    : (-> void)
-	pkglocal const push    : (lwt : lwt# -> void)
-	pkglocal const unshift : (lwt : lwt# -> void)
-	pkglocal const pop     : (-> std.option(lwt#))
-	pkglocal const shift   : (-> std.option(lwt#))
-	pkglocal const curr    : (-> lwt#)
+	pkglocal const _switch : (hwt : hwt#, dst : lwt# -> void)
+	pkglocal const push    : (hwt : hwt#, lwt : lwt# -> void)
+	pkglocal const unshift : (hwt : hwt#, lwt : lwt# -> void)
+	pkglocal const pop     : (hwt : hwt# -> std.option(lwt#))
+	pkglocal const shift   : (hwt : hwt# -> std.option(lwt#))
 ;;
 
-var sched : struct
-	queue  : lwt#
-	curr   : lwt#
-	reaper : lwt#
+var hwts : struct
+	head : hwt#
+	tail : hwt#
+	lock : thread.mutex
 ;;
-
+var procs : thread.sem
 var mainstk : lwt
 
 const init = {
-	sched.reaper = mk(reap, 256)
-	-> (sched.curr = &mainstk)
+	var hwt = mkhwt()
+	hwt.reaper = mk(reap, 256)
+	hwt.state = Active
+	/*
+	var n = (thread.ncpu() - 1 : uint32)
+	procs = thread.mksem(n)
+	for var i = 0; i < n; i++
+		thread.spawn({
+			var hwt = mkhwt()
+			hwt.reaper = mk(reap, 256)
+			thread.mtxlock(&hwts.lock)
+			match hwts.head
+			| Zptr: hwts.head = hwts.tail = hwt
+			| _:
+				hwts.tail.next = hwt
+				hwts.tail = hwt
+			;;
+			thread.mtxunlock(&hwts.lock)
+			thread.ftxwait(&hwt.state, Parked, -1)
+		})
+	;;
+	*/
+	-> (hwt.curr = &mainstk)
 }
 
 const spawn = {fn
 	var lwt = _mk(fn, 8192, done)
+	/*
+	if thread.trywait(&procs)
+	;;
+	*/
 	switch(lwt)
 	-> lwt
 }
 
 const switch = {dst
-	var prev = sched.curr
-	push(prev)
-	swap(prev, (sched.curr = dst))
+	_switch(gethwt(), dst)
 }
 
 const pass = {
-	match pop()
-	| `std.Some lwt: switch(lwt)
+	var hwt = gethwt()
+	match pop(hwt)
+	| `std.Some lwt: _switch(hwt, lwt)
 	| `std.None: std.die("rip\n")
 	;;
 }
 
 const yield = {
-	match shift()
-	| `std.Some lwt: switch(lwt)
+	var hwt = gethwt()
+	match shift(hwt)
+	| `std.Some lwt: _switch(hwt, lwt)
 	| `std.None:
 	;;
 }
 
 const block = {
-	match shift()
+	var hwt = gethwt()
+	match shift(hwt)
 	| `std.Some lwt:
-		var prev = sched.curr
-		swap(prev, (sched.curr = lwt))
+		var prev = hwt.curr
+		swap(prev, (hwt.curr = lwt))
 	| `std.None: std.die("you deadlocked\n")
 	;;
 }
 
+const curr = {
+	-> gethwt().curr
+}
+
 const done = {
-	switch(sched.reaper)
+	switch(gethwt().reaper)
 }
 
 const reap = {
+	var hwt = gethwt()
 	for ; ;
-		match pop()
+		match pop(hwt)
 		| `std.Some lwt: free(lwt)
 		| `std.None: std.die("how\n")
 		;;
-		match shift()
-		| `std.Some lwt: swap(sched.reaper, (sched.curr = lwt))
+		match shift(hwt)
+		| `std.Some lwt: swap(hwt.reaper, (hwt.curr = lwt))
 		| `std.None: std.exit(0)
 		;;
 	;;
 }
 
-const push = {lwt
+const _switch = {hwt, dst
+	var prev = hwt.curr
+	push(hwt, prev)
+	swap(prev, (hwt.curr = dst))
+}
+
+const push = {hwt, lwt
 	lwt.next = Zptr
-	match sched.queue
+	match hwt.queue
 	| Zptr:
 		lwt.prev = lwt
-		sched.queue = lwt
+		hwt.queue = lwt
 	| q:
 		lwt.prev = q.prev
 		q.prev.next = lwt
@@ -99,46 +140,41 @@ const push = {lwt
 	;;
 }
 
-const unshift = {lwt
-	lwt.next = sched.queue
-	match sched.queue
-	| Zptr:
-		lwt.prev = lwt
+const unshift = {hwt, lwt
+	lwt.next = hwt.queue
+	match hwt.queue
+	| Zptr: lwt.prev = lwt
 	| q:
 		lwt.prev = q.prev
 		q.prev = lwt
 	;;
-	sched.queue = lwt
+	hwt.queue = lwt
 }
 
-const pop = {
-	if sched.queue == Zptr
+const pop = {hwt
+	if hwt.queue == Zptr
 		-> `std.None
 	;;
 
-	var lwt = sched.queue.prev
+	var lwt = hwt.queue.prev
 	if lwt.prev == lwt
-		sched.queue = Zptr
+		hwt.queue = Zptr
 	else
-		sched.queue.prev = lwt.prev
+		hwt.queue.prev = lwt.prev
 		lwt.prev.next = Zptr
 	;;
 	-> `std.Some lwt
 }
 
-const shift = {
-	if sched.queue == Zptr
+const shift = {hwt
+	if hwt.queue == Zptr
 		-> `std.None
 	;;
 
-	var lwt = sched.queue
+	var lwt = hwt.queue
 	if lwt.next != Zptr
 		lwt.next.prev = lwt.prev
 	;;
-	sched.queue = lwt.next
+	hwt.queue = lwt.next
 	-> `std.Some lwt
-}
-
-const curr = {
-	-> sched.curr
 }

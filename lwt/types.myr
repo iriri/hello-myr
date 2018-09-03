@@ -1,0 +1,18 @@
+use thread
+
+use "lwt"
+
+pkg lwt =
+	pkglocal type hwt = struct
+		next   : hwt#
+		queue  : lwt#
+		midpt  : lwt#
+		curr   : lwt#
+		reaper : lwt#
+		lock   : thread.mutex
+		state  : thread.ftxtag
+	;;
+
+	pkglocal const Parked : thread.ftxtag = 0
+	pkglocal const Active : thread.ftxtag = 1
+;;

@@ -1,0 +1,144 @@
+use std
+
+use "lwt"
+
+pkg lwt =
+	const init   : (-> lwt#)
+	const spawn  : (fn : (-> void) -> lwt#)
+	const switch : (dst : lwt# -> void)
+	const pass   : (-> void)
+	const yield  : (-> void)
+	const block  : (-> void)
+	const done   : (-> void)
+
+	pkglocal generic Zptr : @a# = (0 : @a#)
+
+	pkglocal const reap    : (-> void)
+	pkglocal const push    : (lwt : lwt# -> void)
+	pkglocal const unshift : (lwt : lwt# -> void)
+	pkglocal const pop     : (-> std.option(lwt#))
+	pkglocal const shift   : (-> std.option(lwt#))
+	pkglocal const curr    : (-> lwt#)
+;;
+
+var sched : struct
+	queue  : lwt#
+	curr   : lwt#
+	reaper : lwt#
+;;
+
+var mainstk : lwt
+
+const init = {
+	sched.reaper = mk(reap, 256)
+	-> (sched.curr = &mainstk)
+}
+
+const spawn = {fn
+	var lwt = _mk(fn, 8192, done)
+	switch(lwt)
+	-> lwt
+}
+
+const switch = {dst
+	var prev = sched.curr
+	push(prev)
+	swap(prev, (sched.curr = dst))
+}
+
+const pass = {
+	match pop()
+	| `std.Some lwt: switch(lwt)
+	| `std.None: std.die("rip\n")
+	;;
+}
+
+const yield = {
+	match shift()
+	| `std.Some lwt: switch(lwt)
+	| `std.None:
+	;;
+}
+
+const block = {
+	match shift()
+	| `std.Some lwt:
+		var prev = sched.curr
+		swap(prev, (sched.curr = lwt))
+	| `std.None: std.die("you deadlocked\n")
+	;;
+}
+
+const done = {
+	switch(sched.reaper)
+}
+
+const reap = {
+	for ; ;
+		match pop()
+		| `std.Some lwt: free(lwt)
+		| `std.None: std.die("how\n")
+		;;
+		match shift()
+		| `std.Some lwt: swap(sched.reaper, (sched.curr = lwt))
+		| `std.None: std.exit(0)
+		;;
+	;;
+}
+
+const push = {lwt
+	lwt.next = Zptr
+	match sched.queue
+	| Zptr:
+		lwt.prev = lwt
+		sched.queue = lwt
+	| q:
+		lwt.prev = q.prev
+		q.prev.next = lwt
+		q.prev = lwt
+	;;
+}
+
+const unshift = {lwt
+	lwt.next = sched.queue
+	match sched.queue
+	| Zptr:
+		lwt.prev = lwt
+	| q:
+		lwt.prev = q.prev
+		q.prev = lwt
+	;;
+	sched.queue = lwt
+}
+
+const pop = {
+	if sched.queue == Zptr
+		-> `std.None
+	;;
+
+	var lwt = sched.queue.prev
+	if lwt.prev == lwt
+		sched.queue = Zptr
+	else
+		sched.queue.prev = lwt.prev
+		lwt.prev.next = Zptr
+	;;
+	-> `std.Some lwt
+}
+
+const shift = {
+	if sched.queue == Zptr
+		-> `std.None
+	;;
+
+	var lwt = sched.queue
+	if lwt.next != Zptr
+		lwt.next.prev = lwt.prev
+	;;
+	sched.queue = lwt.next
+	-> `std.Some lwt
+}
+
+const curr = {
+	-> sched.curr
+}

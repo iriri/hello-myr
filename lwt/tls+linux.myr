@@ -1,0 +1,29 @@
+use std
+use sys
+
+use "types"
+
+pkg lwt =
+	const mkhwt  : (-> hwt#)
+
+	extern const gethwt : (-> hwt#)
+;;
+
+const Sysarchprctl = 158
+const Archsetgs = 0x1001
+const Archsetfs = 0x1002
+const Archgetfs = 0x1003
+const Archgetgs = 0x1004
+
+/*
+We use two levels of indirection here because Linux doesn't support the fsgsbase instructions yet
+so it takes a syscall to get the actual value of %fs. Addressing memory offset of %fs, on the other
+hand, does not require a syscall so we just store the pointer that we're actually interested in at
+%fs:0 because I'm way too lazy to write more assembly than I need to.
+*/
+const mkhwt = {
+	var hwt : hwt# = std.zalloc()
+	var p = std.mk(hwt)
+	sys.syscall(Sysarchprctl, Archsetfs, p)
+	-> hwt
+}

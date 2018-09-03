@@ -4,4 +4,19 @@ bin test =
 	lwt-impl+x64.s
 	sched.myr
 	chan.myr
+	tls+linux.myr
+	tls-impl+linux-x64.s
+	types.myr
+
+	# tls+freebsd.myr
+	# tls-impl+freebsd-x64.s
+	# tls+openbsd.myr
+	# tls-impl+openbsd-x64.s
+	# tls+osx.myr
+	# tls-impl+osx-x64.s
+	# kqueue-freebsd.myr
+	# kqueue-openbsd.myr
+	# kqueue-osx.myr
+	# poller-kqueue.myr
+	# poller-linux.myr
 ;;

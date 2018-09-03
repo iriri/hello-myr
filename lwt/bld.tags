@@ -1,0 +1,3 @@
+kqueue: freebsd
+kqueue: openbsd
+kqueue: osx

@@ -2,6 +2,10 @@
 .globl _lwt$swap
 lwt$swap:
 _lwt$swap:
+	leaq	0x458(%rdi), %r10
+	cmpq	%r10, %rsp
+	jb	sad
+
 	movq	%rsp, 0x00(%rdi)
 	movq	%rbp, 0x08(%rdi)
 	movq	%rax, 0x10(%rdi)
@@ -20,3 +24,6 @@ _lwt$swap:
 	movq	0x08(%rsi), %rbp
 	movq	0x00(%rsi), %rsp
 	retq
+
+sad:
+	call	_lwt$ovfl

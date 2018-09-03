@@ -20,7 +20,8 @@ pkg lwt =
 	const free        : (lwt : lwt# -> void)
 	extern const swap : (src : lwt#, dst : lwt# -> void)
 
-	pkglocal const _mk : (fn : (-> void), stksz : std.size, diefn : (-> void) -> lwt#)
+	pkglocal const _mk  : (fn : (-> void), stksz : std.size, diefn : (-> void) -> lwt#)
+	pkglocal const ovfl : (-> void)
 ;;
 
 const mk = {fn, stksz
@@ -28,7 +29,7 @@ const mk = {fn, stksz
 }
 
 const _mk = {fn, stksz, diefn
-	var sz = (stksz + sizeof(lwt) + 0xf) & ~0xf
+	var sz = (stksz + sizeof(lwt) + 0x40f) & ~0xf
 	var lwt = (std.bytealloc(sz) : lwt#)
 	var stklen = (sz - sizeof(lwt)) / sizeof(void#)
 
@@ -46,4 +47,8 @@ const free = {lwt
 
 const ret = {
 	std.die("a lwt's fn returned instead of cleaning itself up\n")
+}
+
+const ovfl = {
+	std.die("a lwt's stack overflowed\n")
 }

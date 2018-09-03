@@ -2,7 +2,6 @@ use std
 
 use "lwt"
 use "sched"
-use "tls"
 
 pkg lwt =
 	type chan(@a) = struct
@@ -74,7 +73,7 @@ generic chrecv = {c
 			c.sendq.tail = Zptr
 		;;
 		var msg = w.msg
-		unshift(gethwt(), w.lwt)
+		unshift(w.lwt)
 		-> msg
 	;;
 }
