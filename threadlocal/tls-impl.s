@@ -9,5 +9,5 @@ _tls$setfs:
 .globl _tls$getfs
 tls$getfs:
 _tls$getfs:
-	rdgsbaseq %rax
+	rdfsbaseq %rax
 	retq
